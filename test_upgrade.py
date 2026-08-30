@@ -152,6 +152,27 @@ def test_multi_route_alternatives_and_scoring():
 
             print(f"  -> Route {idx + 1}: {dist_km} km ({dur_mins}m) | Curvature Ratio: {curvature_ratio} deg/km | Comfort: {comfort_score}/100 | Scenic Score: {scenic_score}/100")
 
+def test_html_and_js_integrity():
+    print("\n--- Testing HTML DOM & JS Element Bindings Integrity ---")
+    with open('index.html', 'r', encoding='utf-8') as f:
+        html = f.read()
+    with open('app.js', 'r', encoding='utf-8') as f:
+        js = f.read()
+
+    import re
+    html_ids = set(re.findall(r'id=["\']([^"\']+)["\']', html))
+    js_ids = set(re.findall(r'getElementById\(["\']([^"\']+)["\']\)', js))
+
+    dynamic_prefixes = ('card-', 'corridor-item-', 'check-', 'car-dot')
+    missing = [i for i in js_ids if i not in html_ids and not any(i.startswith(p) for p in dynamic_prefixes)]
+    
+    print(f"[OK] Total HTML IDs defined: {len(html_ids)}")
+    print(f"[OK] Total JS Element IDs queried: {len(js_ids)}")
+    if missing:
+        print(f"[WARN] Missing IDs in HTML: {missing}")
+    assert len(missing) == 0, f"Missing IDs in HTML: {missing}"
+    print("[OK] All JS element bindings exist in HTML!")
+
 if __name__ == '__main__':
     test_wiki_and_wikivoyage()
     test_unit_conversions()
@@ -159,5 +180,6 @@ if __name__ == '__main__':
     test_topological_sorting()
     test_backup_restore_schema()
     test_multi_route_alternatives_and_scoring()
+    test_html_and_js_integrity()
     print("\nAll multi-route scenic evaluations and architectural tests passed successfully!")
 
