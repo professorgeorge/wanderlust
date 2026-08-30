@@ -73,11 +73,13 @@ export class RouteService {
   }
 
   /**
-   * Resolve a query string to coordinates
+   * Resolve a query string to coordinates with multi-tier failover
    */
   async geocode(query) {
     if (!query) return null;
+    query = query.trim().replace(/^📍\s*/, '');
 
+    // 1. Coordinate string directly (e.g. "37.77, -122.41")
     const coordMatch = query.match(/^([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)$/);
     if (coordMatch) {
       return {
@@ -87,14 +89,58 @@ export class RouteService {
       };
     }
 
-    const suggestions = await this.searchSuggestions(query);
-    if (suggestions.length > 0) {
-      return {
-        name: suggestions[0].title,
-        fullName: `${suggestions[0].title}, ${suggestions[0].subtitle}`,
-        lat: suggestions[0].lat,
-        lng: suggestions[0].lng
-      };
+    // 2. Primary Geocoder: Photon (Komoot)
+    try {
+      const suggestions = await this.searchSuggestions(query);
+      if (suggestions && suggestions.length > 0) {
+        return {
+          name: suggestions[0].title,
+          fullName: `${suggestions[0].title}, ${suggestions[0].subtitle}`,
+          lat: suggestions[0].lat,
+          lng: suggestions[0].lng
+        };
+      }
+    } catch (e) {
+      console.warn('Photon geocoding error:', e);
+    }
+
+    // 3. Fallback Geocoder: Open-Meteo High-Speed Global Search
+    try {
+      const meteoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=en&format=json`;
+      const res = await fetch(meteoUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          const r = data.results[0];
+          return {
+            name: r.name,
+            fullName: `${r.name}, ${r.admin1 || ''} ${r.country || ''}`.trim(),
+            lat: r.latitude,
+            lng: r.longitude
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Open-Meteo geocoding error:', e);
+    }
+
+    // 4. Fallback Geocoder: OpenStreetMap Nominatim
+    try {
+      const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+      const res = await fetch(nomUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) {
+          return {
+            name: data[0].display_name.split(',')[0],
+            fullName: data[0].display_name,
+            lat: parseFloat(data[0].lat),
+            lng: parseFloat(data[0].lon)
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Nominatim geocoding error:', e);
     }
 
     return null;
