@@ -1562,6 +1562,47 @@ class WanderingLayerApp {
     `;
   }
 
+  updateRouteSummary(route) {
+    if (!route) return;
+
+    const distEl = document.getElementById('route-summary-dist');
+    const directEl = document.getElementById('route-summary-direct');
+    const totalEl = document.getElementById('route-summary-total');
+    const stopsEl = document.getElementById('route-summary-stops');
+
+    const isImperial = this.unitSystem === 'imperial';
+    const distDisplay = isImperial ? `${route.distanceMiles} mi` : `${route.distanceKm} km`;
+    if (distEl) distEl.textContent = distDisplay;
+
+    const formatMins = (mins) => {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    };
+
+    if (directEl) directEl.textContent = formatMins(route.durationMinutes);
+
+    const selectedStops = this.selectedWaypoints || [];
+    const detourAddedMins = selectedStops.reduce((sum, p) => sum + (p.detourMinutes || 0), 0);
+    const totalMins = route.durationMinutes + detourAddedMins;
+
+    if (totalEl) totalEl.textContent = formatMins(totalMins);
+    if (stopsEl) stopsEl.textContent = `${selectedStops.length}`;
+
+    // Update navigation transfer links
+    const gmapsLink = document.getElementById('launch-gmaps-link');
+    const appleLink = document.getElementById('launch-apple-link');
+
+    if (gmapsLink) {
+      gmapsLink.href = this.routeService.generateGoogleMapsUrl(route.start, route.end, selectedStops);
+      gmapsLink.style.display = 'inline-flex';
+    }
+    if (appleLink) {
+      appleLink.href = this.routeService.generateAppleMapsUrl(route.start, route.end, selectedStops);
+      appleLink.style.display = 'inline-flex';
+    }
+  }
+
   async handleRouteScan() {
     const originInput = document.getElementById('route-origin-input').value.trim().replace(/^📍\s*/, '');
     const destInput = document.getElementById('route-dest-input').value.trim();
