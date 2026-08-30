@@ -361,12 +361,24 @@ export class RouteService {
     ];
   }
 
-  /**
-   * Calculate driving route between two points (defaults to primary alternative)
-   */
-  async calculateRoute(start, end) {
-    const routes = await this.calculateAlternativeRoutes(start, end);
-    return routes.length > 0 ? routes[0] : null;
+  calcBearing(lat1, lon1, lat2, lon2) {
+    const toRad = deg => deg * Math.PI / 180;
+    const toDeg = rad => rad * 180 / Math.PI;
+
+    const phi1 = toRad(lat1);
+    const phi2 = toRad(lat2);
+    const deltaLambda = toRad(lon2 - lon1);
+
+    const y = Math.sin(deltaLambda) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) -
+              Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+    const theta = Math.atan2(y, x);
+    return (toDeg(theta) + 360) % 360;
+  }
+
+  sequenceWaypointsTopologically(waypoints, latLngs = null) {
+    return this.sequenceWaypoints(waypoints, latLngs);
   }
 
   /**

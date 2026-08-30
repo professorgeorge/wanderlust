@@ -292,6 +292,7 @@ class WanderingLayerApp {
         }
       } else {
         this.gps.stopLiveTracking();
+        this.gps.stopSimulation();
         this.heartbeat.stop();
         this.isTracking = false;
         startBtn.classList.remove('tracking');
@@ -1746,34 +1747,6 @@ class WanderingLayerApp {
     } else {
       btn.textContent = 'Retry Cache';
       btn.disabled = false;
-    }
-  }
-
-  updateRouteSummary(route) {
-    const summary = this.routeService.calculateTripWithWaypoints(this.selectedWaypoints);
-    
-    const displayDist = this.unitSystem === 'imperial' ? `${route.distanceMiles} mi` : `${route.distanceKm} km`;
-    document.getElementById('route-summary-dist').textContent = displayDist;
-    
-    const directHours = Math.floor(route.durationMinutes / 60);
-    const directMins = route.durationMinutes % 60;
-    document.getElementById('route-summary-direct').textContent = `${directHours}h ${directMins}m`;
-
-    const totalHours = Math.floor(summary.totalMinutes / 60);
-    const totalMins = summary.totalMinutes % 60;
-    document.getElementById('route-summary-total').textContent = `${totalHours}h ${totalMins}m`;
-    document.getElementById('route-summary-stops').textContent = `${summary.waypointCount}`;
-
-    const gmapsUrl = this.routeService.generateGoogleMapsUrl(route.start, route.end, this.selectedWaypoints);
-    const launchBtn = document.getElementById('launch-gmaps-link');
-    launchBtn.href = gmapsUrl;
-    launchBtn.style.display = 'flex';
-
-    const appleUrl = this.routeService.generateAppleMapsUrl(route.start, route.end, this.selectedWaypoints);
-    const appleBtn = document.getElementById('launch-apple-link');
-    if (appleBtn) {
-      appleBtn.href = appleUrl;
-      appleBtn.style.display = 'flex';
     }
   }
 

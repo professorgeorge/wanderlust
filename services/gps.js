@@ -274,21 +274,4 @@ export class GpsService {
     const theta = Math.atan2(y, x);
     return (toDeg(theta) + 360) % 360;
   }
-
-  generateSmoothRoute(waypoints, stepsPerSegment = 20) {
-    const route = [];
-    for (let i = 0; i < waypoints.length - 1; i++) {
-      const p1 = waypoints[i];
-      const p2 = waypoints[i + 1];
-      for (let s = 0; s < stepsPerSegment; s++) {
-        const t = s / stepsPerSegment;
-        route.push({
-          lat: p1.lat + (p2.lat - p1.lat) * t,
-          lng: p1.lng + (p2.lng - p1.lng) * t
-        });
-      }
-    }
-    route.push(waypoints[waypoints.length - 1]);
-    return route;
-  }
 }
