@@ -54,3 +54,19 @@ Then open `http://localhost:8080` in your web browser.
 3. Go to **Settings > Pages > Branch: main / root > Save**.
 4. GitHub provides a free, public, secure HTTPS URL (e.g. `https://yourname.github.io/wandering-layer/`).
 5. Open this URL on your phone's Safari or Chrome, tap **"Add to Home Screen"**, connect to Bluetooth in your car, tap **"Start Journey"**, and switch back to Google Maps!
+
+---
+
+### Conceptualization & Development Credit
+
+**Conceptualized, architected, and developed by [Babu George](https://www.linkedin.com/in/beingbabu/)** as an open, serendipitous road-trip audio companion.
+
+---
+
+### Legal Disclaimer & Non-Liability Clause
+
+1. **Absolute "AS-IS" & No Warranty:** This software is provided strictly on an "AS-IS" and "AS-AVAILABLE" basis without warranties or representations of any kind, whether express, statutory, or implied, including but not limited to the implied warranties of merchantability, fitness for a particular purpose, non-infringement, or routing accuracy.
+2. **Informational & Recreational Purpose Only:** All waypoint data, geographic coordinates, estimated arrival times, detour durations, roadside attractions, viewpoints, historical facts, and weather forecasts are dynamically aggregated from public, crowdsourced, third-party APIs (OpenStreetMap, Wikimedia Foundation, Open-Meteo, OSRM) and are subject to real-world errors, omissions, road closures, or changing conditions. This application is NOT an emergency navigation system or certified driving safety tool.
+3. **Express Assumption of Risk & Driver Responsibility:** The vehicle operator assumes sole, total responsibility for vehicle operation, route selection, and personal safety. The driver MUST remain fully attentive to the roadway at all times, adhere to all posted speed limits and traffic regulations, respect private property boundaries, and NEVER manipulate screen controls or adjust settings while the vehicle is in motion.
+4. **Total Limitation of Liability & Hold Harmless:** To the fullest extent permitted by applicable law, in no event shall the author/creator (Babu George), developers, or project contributors be liable for any direct, indirect, incidental, punitive, special, or consequential damages, losses, personal injuries, fatalities, property damage, traffic citations, or accidents arising out of or in connection with the access, use, or inability to use this software. By accessing or running this application, you expressly agree to hold harmless and release the creators from any and all legal claims, liabilities, and causes of action.
+
