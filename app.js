@@ -526,37 +526,43 @@ class WanderingLayerApp {
         return;
       }
 
-      statusEl.innerHTML = '<span>⏳ Evaluating scenic driving routes for simulation...</span>';
+      statusEl.innerHTML = '<span>⏳ Mapping route and launching drive simulation...</span>';
 
-      let startCoords = this.selectedSimOrigin;
-      if (!startCoords || !originInput.includes(startCoords.name)) {
-        startCoords = await this.routeService.geocode(originInput);
-      }
+      try {
+        let startCoords = this.selectedSimOrigin;
+        if (!startCoords || !originInput.includes(startCoords.name)) {
+          startCoords = await this.routeService.geocode(originInput);
+        }
 
-      let endCoords = this.selectedSimDest;
-      if (!endCoords || !destInput.includes(endCoords.name)) {
-        endCoords = await this.routeService.geocode(destInput);
-      }
+        let endCoords = this.selectedSimDest;
+        if (!endCoords || !destInput.includes(endCoords.name)) {
+          endCoords = await this.routeService.geocode(destInput);
+        }
 
-      if (!startCoords || !endCoords) {
-        statusEl.innerHTML = '<span style="color: #f85149;">Could not locate one of the endpoints.</span>';
-        return;
-      }
+        if (!startCoords || !endCoords) {
+          statusEl.innerHTML = '<span style="color: #f85149;">Could not locate one of the endpoints.</span>';
+          return;
+        }
 
-      const routes = await this.routeService.calculateAlternativeRoutes(startCoords, endCoords);
-      if (!routes || routes.length === 0) {
-        statusEl.innerHTML = '<span style="color: #f85149;">Could not compute driving routes between those locations.</span>';
-        return;
-      }
+        const route = await this.routeService.calculateRoute(startCoords, endCoords);
+        if (!route) {
+          statusEl.innerHTML = '<span style="color: #f85149;">Could not compute driving route between those locations.</span>';
+          return;
+        }
 
-      const simOptionsContainer = document.getElementById('sim-route-options-container');
-
-      const launchSimulationForRoute = (selectedIdx) => {
-        const route = routes[selectedIdx];
         this.currentSimRoute = route;
 
-        this.renderAlternativeRoutePolylines(routes, selectedIdx, (newIdx) => launchSimulationForRoute(newIdx));
-        this.renderRouteOptionsCards(routes, selectedIdx, simOptionsContainer, (newIdx) => launchSimulationForRoute(newIdx));
+        // Draw route polyline on map
+        if (this.routePolyline) {
+          this.map.removeLayer(this.routePolyline);
+        }
+        this.routePolyline = L.polyline(route.latLngs, {
+          color: '#58a6ff',
+          weight: 6,
+          opacity: 0.9,
+          lineCap: 'round'
+        }).addTo(this.map);
+        this.map.fitBounds(this.routePolyline.getBounds(), { padding: [40, 40] });
 
         // Predictive Route Weather Corridor Forecast
         try {
@@ -578,18 +584,19 @@ class WanderingLayerApp {
         this.gps.startSimulation(route.latLngs);
         this.isTracking = true;
 
-        statusEl.innerHTML = `<span>✓ Simulating <strong>Route ${selectedIdx + 1} (${route.badge})</strong> &bull; ${route.distanceKm} km</span>`;
+        statusEl.innerHTML = `<span>✓ Simulating drive &bull; ${route.distanceKm} km (${route.durationMinutes}m)</span>`;
         
         setTimeout(() => {
           simModal.classList.remove('active');
-        }, 800);
+        }, 500);
 
         document.getElementById('hud-status').textContent = 'Simulating Route';
         startBtn.classList.add('tracking');
         startBtn.innerHTML = `<span>Stop Simulation</span>`;
-      };
-
-      launchSimulationForRoute(0);
+      } catch (err) {
+        console.error('Simulation start error:', err);
+        statusEl.innerHTML = '<span style="color:#f85149;">Simulation could not start. Please try again.</span>';
+      }
     });
 
     document.getElementById('sim-speed-slider').addEventListener('input', (e) => {
@@ -1565,72 +1572,74 @@ class WanderingLayerApp {
       return;
     }
 
-    statusEl.innerHTML = '<span>⏳ Locating endpoints and evaluating scenic driving alternatives...</span>';
+    statusEl.innerHTML = '<span>⏳ Locating endpoints and mapping driving corridor...</span>';
 
-    let startCoords = this.selectedOrigin;
-    if (!startCoords || !originInput.includes(startCoords.name)) {
-      startCoords = await this.routeService.geocode(originInput);
-    }
-
-    let endCoords = this.selectedDest;
-    if (!endCoords || !destInput.includes(endCoords.name)) {
-      endCoords = await this.routeService.geocode(destInput);
-    }
-
-    if (!startCoords || !endCoords) {
-      statusEl.innerHTML = '<span style="color: #f85149;">Could not locate one of the endpoints. Try selecting from the suggestions list as you type.</span>';
-      return;
-    }
-
-    statusEl.innerHTML = `<span>Comparing driving routes from <strong>${startCoords.name}</strong> to <strong>${endCoords.name}</strong>...</span>`;
-
-    const routes = await this.routeService.calculateAlternativeRoutes(startCoords, endCoords);
-    if (!routes || routes.length === 0) {
-      statusEl.innerHTML = '<span style="color: #f85149;">Unable to calculate route. Check road connectivity.</span>';
-      return;
-    }
-
-    this.activeRouteIndex = 0;
-    const optionsContainer = document.getElementById('route-options-container');
-
-    const activateRoute = async (idx) => {
-      this.activeRouteIndex = idx;
-      const selectedRoute = routes[idx];
-      this.routeService.currentRoute = selectedRoute;
-
-      // 1. Immediately render polylines and cards on screen with zero lag
-      this.renderAlternativeRoutePolylines(routes, idx, (newIdx) => activateRoute(newIdx));
-      this.renderRouteOptionsCards(routes, idx, optionsContainer, (newIdx) => activateRoute(newIdx));
-
-      // 2. Predictive En-Route Weather Forecast
-      try {
-        const weatherPreviewEl = document.getElementById('route-weather-preview');
-        this.weather.getRouteWeatherForecast(selectedRoute.latLngs, selectedRoute.durationMinutes, this.unitSystem).then(fc => {
-          this.renderRouteWeatherPreview(fc, weatherPreviewEl);
-        });
-      } catch (e) {
-        console.warn('Weather forecast notice:', e);
+    try {
+      let startCoords = this.selectedOrigin;
+      if (!startCoords || !originInput.includes(startCoords.name)) {
+        startCoords = await this.routeService.geocode(originInput);
       }
 
+      let endCoords = this.selectedDest;
+      if (!endCoords || !destInput.includes(endCoords.name)) {
+        endCoords = await this.routeService.geocode(destInput);
+      }
+
+      if (!startCoords || !endCoords) {
+        statusEl.innerHTML = '<span style="color: #f85149;">Could not locate one of the endpoints. Try typing a city or landmark.</span>';
+        return;
+      }
+
+      statusEl.innerHTML = `<span>Mapping driving route from <strong>${startCoords.name}</strong> to <strong>${endCoords.name}</strong>...</span>`;
+
+      const route = await this.routeService.calculateRoute(startCoords, endCoords);
+      if (!route) {
+        statusEl.innerHTML = '<span style="color: #f85149;">Unable to calculate route.</span>';
+        return;
+      }
+
+      this.routeService.currentRoute = route;
+
+      // 1. Immediately draw route polyline on map
+      if (this.routePolyline) {
+        this.map.removeLayer(this.routePolyline);
+      }
+      this.routePolyline = L.polyline(route.latLngs, {
+        color: '#58a6ff',
+        weight: 6,
+        opacity: 0.9,
+        lineCap: 'round'
+      }).addTo(this.map);
+      this.map.fitBounds(this.routePolyline.getBounds(), { padding: [40, 40] });
+
+      // 2. Show Summary Banner, Offline Cache button, Simulate button, Export GPX
       document.getElementById('offline-cache-row').style.display = 'flex';
       document.getElementById('route-summary-banner').style.display = 'flex';
       document.getElementById('route-simulate-btn').style.display = 'inline-block';
       document.getElementById('export-gpx-btn').style.display = 'flex';
-      this.updateRouteSummary(selectedRoute);
+      this.updateRouteSummary(route);
 
-      statusEl.innerHTML = `<span>✓ Route selected: <strong>Route ${idx + 1} (${selectedRoute.badge})</strong> &bull; Loading roadside highlights...</span>`;
+      // 3. Predictive En-Route Weather Forecast
+      try {
+        const weatherPreviewEl = document.getElementById('route-weather-preview');
+        this.weather.getRouteWeatherForecast(route.latLngs, route.durationMinutes, this.unitSystem).then(fc => {
+          this.renderRouteWeatherPreview(fc, weatherPreviewEl);
+        });
+      } catch (e) {}
 
-      // 3. Scan corridor in background without blocking UI
+      statusEl.innerHTML = `<span>✓ Route ready &bull; Loading roadside highlights...</span>`;
+
+      // 4. Stream corridor landmarks
       const listEl = document.getElementById('corridor-list');
       listEl.innerHTML = '<div style="color:var(--text-muted);padding:8px;font-size:0.85rem;">⏳ Streaming roadside wonders...</div>';
 
       this.routeService.discoverCorridorWaypoints(3500).then(corridorPois => {
-        statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders sequenced along Route ${idx + 1}:</span>`;
+        statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders along your journey:</span>`;
         listEl.innerHTML = '';
         this.selectedWaypoints = [];
 
         if (corridorPois.length === 0) {
-          listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No major recorded roadside landmarks along this corridor.</div>';
+          listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Ready for departure. No major recorded stops along this segment.</div>';
         } else {
           corridorPois.forEach((poi) => {
             const item = document.createElement('div');
@@ -1662,7 +1671,7 @@ class WanderingLayerApp {
                 item.classList.remove('selected');
                 this.selectedWaypoints = this.selectedWaypoints.filter(w => w.id !== poi.id);
               }
-              this.updateRouteSummary(selectedRoute);
+              this.updateRouteSummary(route);
             });
 
             listEl.appendChild(item);
@@ -1672,9 +1681,10 @@ class WanderingLayerApp {
         console.warn('Corridor discovery notice:', err);
         listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Ready for departure.</div>';
       });
-    };
-
-    activateRoute(0);
+    } catch (err) {
+      console.error('Route scan error:', err);
+      statusEl.innerHTML = '<span style="color:#f85149;">Unable to calculate route. Try again.</span>';
+    }
   }
 
   async handleOfflinePreCache() {

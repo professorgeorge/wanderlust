@@ -147,23 +147,18 @@ export class RouteService {
   }
 
   /**
-   * Calculate alternative driving routes between two points with scenic & comfort scoring
-   * Includes multi-server failover (OSRM global -> OSM Germany mirror)
+   * Calculate single reliable driving route between two points
    */
-  async calculateAlternativeRoutes(start, end) {
+  async calculateRoute(start, end) {
     if (!start || !end || isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) {
       console.warn('Invalid route coordinates:', start, end);
-      return [];
+      return null;
     }
 
     const endpoints = [
-      `https://routing.openstreetmap.de/routed-car/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=true`,
-      `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=true`,
       `https://routing.openstreetmap.de/routed-car/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`,
       `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson`
     ];
-
-    let rawRoutes = [];
 
     for (const url of endpoints) {
       try {
@@ -176,85 +171,44 @@ export class RouteService {
         const data = await res.json();
 
         if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-          rawRoutes = data.routes.map((r, idx) => {
-            const latLngs = r.geometry.coordinates.map(coord => [coord[1], coord[0]]);
-            return {
-              index: idx,
-              id: `route-${start.name}-${end.name}-${idx}`.replace(/[^a-zA-Z0-9]/g, '_'),
-              start,
-              end,
-              distanceMeters: r.distance,
-              distanceKm: (r.distance / 1000).toFixed(1),
-              distanceMiles: (r.distance * 0.000621371).toFixed(1),
-              durationSeconds: r.duration,
-              durationMinutes: Math.max(1, Math.round(r.duration / 60)),
-              latLngs: latLngs,
-              rawGeoJson: r.geometry,
-              legs: r.legs || []
-            };
-          });
-          break; // Successfully obtained routes
+          const r = data.routes[0];
+          const latLngs = r.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          const curvature = this.calculateCurvature(latLngs);
+
+          const route = {
+            id: `route-${start.name}-${end.name}`.replace(/[^a-zA-Z0-9]/g, '_'),
+            start,
+            end,
+            distanceMeters: r.distance,
+            distanceKm: (r.distance / 1000).toFixed(1),
+            distanceMiles: (r.distance * 0.000621371).toFixed(1),
+            durationSeconds: r.duration,
+            durationMinutes: Math.max(1, Math.round(r.duration / 60)),
+            latLngs: latLngs,
+            rawGeoJson: r.geometry,
+            curvatureRatio: curvature.curvatureRatio,
+            comfortScore: curvature.comfortScore,
+            comfortLabel: curvature.comfortLabel,
+            legs: r.legs || []
+          };
+
+          this.currentRoute = route;
+          return route;
         }
       } catch (e) {
         console.warn(`Route mirror failed (${url}):`, e);
       }
     }
 
-    // Failover: If remote servers are unresponsive or rate-limited, generate fallback corridors
-    if (rawRoutes.length === 0) {
-      console.warn('Generating fail-safe local driving corridors');
-      rawRoutes = this.generateFallbackRoutes(start, end);
-    }
+    // Failover: Generate smooth local driving route corridor
+    const fallback = this.generateFallbackRoute(start, end);
+    this.currentRoute = fallback;
+    return fallback;
+  }
 
-    // Find minimum duration for relative delta comparisons
-    const minDuration = Math.min(...rawRoutes.map(r => r.durationMinutes));
-
-    // 2. Score each alternative synchronously (Instant zero-delay response)
-    const evaluatedRoutes = rawRoutes.map((route, idx) => {
-      const curvature = this.calculateCurvature(route.latLngs);
-      
-      // Calculate scenic index based on curvature, distance ratio, and path diversity
-      const baseScenic = Math.min(96, Math.max(68, Math.round(72 + (curvature.curvatureRatio * 0.22) + (idx === 1 ? 6 : 0))));
-      const scenicLabel = baseScenic >= 88 ? '🌟 Highly Scenic Panorama' : (baseScenic >= 78 ? '🌿 Scenic Countryside' : '🛣️ Direct Highway');
-
-      const timeDelta = route.durationMinutes - minDuration;
-
-      let badge = '🌿 Scenic Route';
-      let badgeType = 'badge-balanced';
-
-      if (timeDelta === 0) {
-        badge = '⚡ Fastest Direct';
-        badgeType = 'badge-fastest';
-      }
-
-      return {
-        ...route,
-        curvatureRatio: curvature.curvatureRatio,
-        comfortScore: curvature.comfortScore,
-        comfortLabel: curvature.comfortLabel,
-        scenicScore: baseScenic,
-        scenicLabel: scenicLabel,
-        poiDensityCount: Math.round(baseScenic / 15),
-        timeDeltaMinutes: timeDelta,
-        timeDeltaLabel: timeDelta === 0 ? 'Fastest' : `+${timeDelta}m`,
-        badge,
-        badgeType
-      };
-    });
-
-    // Crown the most scenic route with the Serendipity badge
-    let topScenicRoute = evaluatedRoutes[0];
-    evaluatedRoutes.forEach(r => {
-      if (r.scenicScore > topScenicRoute.scenicScore) topScenicRoute = r;
-    });
-    if (topScenicRoute && evaluatedRoutes.length > 1) {
-      topScenicRoute.badge = '🌟 Serendipity Pick';
-      topScenicRoute.badgeType = 'badge-scenic-top';
-    }
-
-    this.alternativeRoutes = evaluatedRoutes;
-    this.currentRoute = evaluatedRoutes[0];
-    return evaluatedRoutes;
+  async calculateAlternativeRoutes(start, end) {
+    const route = await this.calculateRoute(start, end);
+    return route ? [route] : [];
   }
 
   calculateCurvature(latLngs) {
@@ -294,6 +248,50 @@ export class RouteService {
     }
 
     return { curvatureRatio, comfortScore, comfortLabel };
+  }
+
+  /**
+   * Generate realistic local fallback route geometry if remote routing servers fail/timeout
+   */
+  generateFallbackRoute(start, end) {
+    const lat1 = start.lat;
+    const lon1 = start.lng;
+    const lat2 = end.lat;
+    const lon2 = end.lng;
+
+    const directDistMeters = this.calcDist(lat1, lon1, lat2, lon2);
+    const roadDistMeters = directDistMeters * 1.25;
+    const roadDistKm = roadDistMeters / 1000;
+    const durationMinutes = Math.max(5, Math.round((roadDistKm / 75) * 60));
+
+    const steps = 60;
+    const coords = [];
+    for (let i = 0; i <= steps; i++) {
+      const f = i / steps;
+      const perpFactor = Math.sin(f * Math.PI) * 0.035;
+      const lat = lat1 + (lat2 - lat1) * f + (lon2 - lon1) * perpFactor;
+      const lon = lon1 + (lon2 - lon1) * f - (lat2 - lat1) * perpFactor;
+      coords.push([Number(lat.toFixed(5)), Number(lon.toFixed(5))]);
+    }
+
+    const curvature = this.calculateCurvature(coords);
+
+    return {
+      id: `route-${start.name}-${end.name}`.replace(/[^a-zA-Z0-9]/g, '_'),
+      start,
+      end,
+      distanceMeters: roadDistMeters,
+      distanceKm: roadDistKm.toFixed(1),
+      distanceMiles: (roadDistMeters * 0.000621371).toFixed(1),
+      durationSeconds: durationMinutes * 60,
+      durationMinutes: durationMinutes,
+      latLngs: coords,
+      rawGeoJson: { type: 'LineString', coordinates: coords.map(c => [c[1], c[0]]) },
+      curvatureRatio: curvature.curvatureRatio,
+      comfortScore: curvature.comfortScore,
+      comfortLabel: curvature.comfortLabel,
+      legs: []
+    };
   }
 
   /**
