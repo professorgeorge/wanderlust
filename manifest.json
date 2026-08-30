@@ -1,7 +1,7 @@
 {
-  "name": "The Wandering Layer",
-  "short_name": "WanderLayer",
-  "description": "The Map Beyond the Directions: GPS Audio Companion for roadside discoveries & detours",
+  "name": "Wanderlust",
+  "short_name": "Wanderlust",
+  "description": "The Map Beyond the Directions: Real-time GPS audio companion & predictive weather forecaster for road trips",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0d1117",
