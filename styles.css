@@ -95,6 +95,62 @@ header {
   color: var(--accent-cyan);
 }
 
+/* Standout Plan Route Primary Header Pill */
+.btn-plan-route {
+  background: linear-gradient(135deg, #1f6feb 0%, #7928ca 100%);
+  border: 1px solid rgba(168, 85, 247, 0.6);
+  color: #ffffff !important;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 2px 12px rgba(31, 111, 235, 0.4), 0 0 14px rgba(168, 85, 247, 0.25);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-plan-route:hover {
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 18px rgba(31, 111, 235, 0.6), 0 0 20px rgba(168, 85, 247, 0.45);
+  border-color: #d2a8ff;
+  color: #fff !important;
+}
+
+.btn-plan-route svg {
+  stroke: #ffffff;
+}
+
+/* Prominent Plan Route Button for Sidebar & Empty State */
+.btn-plan-sidebar {
+  width: 100%;
+  background: rgba(88, 166, 255, 0.12);
+  border: 1.5px solid rgba(88, 166, 255, 0.4);
+  color: #79c0ff;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+.btn-plan-sidebar:hover {
+  background: rgba(88, 166, 255, 0.22);
+  border-color: var(--accent-cyan);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+}
+
 /* Main Container Layout */
 main {
   flex: 1;

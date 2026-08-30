@@ -424,10 +424,15 @@ class WanderingLayerApp {
     });
 
     // Route Builder Modal
-    const routeBtn = document.getElementById('route-btn');
     const routeModal = document.getElementById('route-modal');
     const closeRouteBtn = document.getElementById('close-route-btn');
-    routeBtn.addEventListener('click', () => routeModal.classList.add('active'));
+    const openRouteModal = () => routeModal.classList.add('active');
+
+    ['route-btn', 'sidebar-plan-route-btn', 'feed-plan-route-btn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', openRouteModal);
+    });
+
     closeRouteBtn.addEventListener('click', () => routeModal.classList.remove('active'));
 
     document.getElementById('route-my-loc-btn').addEventListener('click', () => {
