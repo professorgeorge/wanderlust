@@ -80,34 +80,37 @@ export class WikiService {
 
     try {
       const res = await fetch(url, {
-        headers: { 'Api-User-Agent': 'TheWanderingLayer/1.0 (Road Trip Audio Companion)' }
+        headers: { 'Api-User-Agent': 'Wanderlust/2.0 (Road Trip Audio Companion)' }
       });
       if (!res.ok) throw new Error(`Wiki API returned ${res.status}`);
       const data = await res.json();
 
       if (!data?.query?.geosearch) return [];
 
-      const results = [];
-      for (const item of data.query.geosearch) {
-        if (this.narratedPages.has(item.pageid)) continue;
-
-        const summary = await this.getPageSummary(item.title);
-        if (summary) {
-          results.push({
+      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(item.pageid));
+      
+      const summaryPromises = candidateItems.map(async (item) => {
+        try {
+          const summary = await this.getPageSummary(item.title);
+          return {
             id: `wiki-${item.pageid}`,
             source: 'wikipedia',
             title: item.title,
             lat: item.lat,
             lng: item.lon,
             dist: item.dist,
-            extract: summary.extract || 'A notable nearby point of interest.',
-            shortDescription: summary.description || 'Historic or cultural landmark',
-            thumbnail: summary.thumbnail?.source || null,
-            pageUrl: `https://en.wikipedia.org/?curid=${item.pageid}`
-          });
+            extract: summary?.extract || 'A notable roadside discovery.',
+            shortDescription: summary?.description || 'Historic or cultural landmark',
+            thumbnail: summary?.thumbnail?.source || null,
+            pageUrl: `https://${this.lang}.wikipedia.org/?curid=${item.pageid}`
+          };
+        } catch (e) {
+          return null;
         }
-      }
-      return results;
+      });
+
+      const results = await Promise.all(summaryPromises);
+      return results.filter(Boolean);
     } catch (err) {
       console.warn('Wikipedia fetch error:', err);
       return [];
@@ -119,35 +122,38 @@ export class WikiService {
 
     try {
       const res = await fetch(url, {
-        headers: { 'Api-User-Agent': 'TheWanderingLayer/1.0 (Road Trip Audio Companion)' }
+        headers: { 'Api-User-Agent': 'Wanderlust/2.0 (Road Trip Audio Companion)' }
       });
       if (!res.ok) return [];
       const data = await res.json();
       if (!data?.query?.geosearch) return [];
 
-      const results = [];
-      for (const item of data.query.geosearch) {
-        if (this.narratedPages.has(`voyage-${item.pageid}`)) continue;
+      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(`voyage-${item.pageid}`));
 
-        const summary = await this.getWikivoyageSummary(item.title);
-        if (summary) {
-          results.push({
+      const summaryPromises = candidateItems.map(async (item) => {
+        try {
+          const summary = await this.getWikivoyageSummary(item.title);
+          return {
             id: `voyage-${item.pageid}`,
             source: 'wikivoyage',
             title: item.title,
             lat: item.lat,
             lng: item.lon,
             dist: item.dist,
-            extract: summary.extract || 'A curated travel destination.',
-            shortDescription: 'Wikivoyage Travel Guide Footnote',
-            thumbnail: summary.thumbnail?.source || null,
+            extract: summary?.extract || 'Travel guide spotlight.',
+            shortDescription: summary?.description || 'Travel guide recommendation',
+            thumbnail: summary?.thumbnail?.source || null,
             pageUrl: `https://${this.lang}.wikivoyage.org/?curid=${item.pageid}`
-          });
+          };
+        } catch (e) {
+          return null;
         }
-      }
-      return results;
-    } catch (e) {
-      console.warn('Wikivoyage fetch error:', e);
+      });
+
+      const results = await Promise.all(summaryPromises);
+      return results.filter(Boolean);
+    } catch (err) {
+      console.warn('Wikivoyage fetch error:', err);
       return [];
     }
   }

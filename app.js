@@ -1618,59 +1618,63 @@ class WanderingLayerApp {
       document.getElementById('export-gpx-btn').style.display = 'flex';
       this.updateRouteSummary(selectedRoute);
 
-      statusEl.innerHTML = `<span>✓ Route selected: <strong>Route ${idx + 1} (${selectedRoute.badge})</strong> &bull; Scanning roadside highlights...</span>`;
+      statusEl.innerHTML = `<span>✓ Route selected: <strong>Route ${idx + 1} (${selectedRoute.badge})</strong> &bull; Loading roadside highlights...</span>`;
 
-      // 3. Scan corridor in background without freezing UI
-      const corridorPois = await this.routeService.discoverCorridorWaypoints(3500);
-
-      statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders sequenced along Route ${idx + 1}:</span>`;
-
+      // 3. Scan corridor in background without blocking UI
       const listEl = document.getElementById('corridor-list');
-      listEl.innerHTML = '';
-      this.selectedWaypoints = [];
+      listEl.innerHTML = '<div style="color:var(--text-muted);padding:8px;font-size:0.85rem;">⏳ Streaming roadside wonders...</div>';
 
-      if (corridorPois.length === 0) {
-        listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No major recorded roadside landmarks along this corridor.</div>';
-      } else {
-        corridorPois.forEach((poi) => {
-          const item = document.createElement('div');
-          item.className = 'corridor-item';
-          item.id = `corridor-item-${poi.id}`;
+      this.routeService.discoverCorridorWaypoints(3500).then(corridorPois => {
+        statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders sequenced along Route ${idx + 1}:</span>`;
+        listEl.innerHTML = '';
+        this.selectedWaypoints = [];
 
-          const detourBadge = `+${poi.detourMinutes}m detour`;
-          const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
+        if (corridorPois.length === 0) {
+          listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No major recorded roadside landmarks along this corridor.</div>';
+        } else {
+          corridorPois.forEach((poi) => {
+            const item = document.createElement('div');
+            item.className = 'corridor-item';
+            item.id = `corridor-item-${poi.id}`;
 
-          item.innerHTML = `
-            <input type="checkbox" id="check-${poi.id}" data-id="${poi.id}">
-            ${poi.thumbnail ? `<img src="${poi.thumbnail}" class="corridor-thumb" alt="${poi.title}">` : '<div class="corridor-thumb" style="background:#21262d;display:flex;align-items:center;justify-content:center;font-size:20px;">🧭</div>'}
-            <div class="corridor-details">
-              <div class="corridor-title">${poi.title}</div>
-              <div class="corridor-meta">
-                <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
-                <span>&bull;</span>
-                <span>${distFromHwy}</span>
+            const detourBadge = `+${poi.detourMinutes}m detour`;
+            const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
+
+            item.innerHTML = `
+              <input type="checkbox" id="check-${poi.id}" data-id="${poi.id}">
+              ${poi.thumbnail ? `<img src="${poi.thumbnail}" class="corridor-thumb" alt="${poi.title}">` : '<div class="corridor-thumb" style="background:#21262d;display:flex;align-items:center;justify-content:center;font-size:20px;">🧭</div>'}
+              <div class="corridor-details">
+                <div class="corridor-title">${poi.title}</div>
+                <div class="corridor-meta">
+                  <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
+                  <span>&bull;</span>
+                  <span>${distFromHwy}</span>
+                </div>
               </div>
-            </div>
-          `;
+            `;
 
-          const chk = item.querySelector('input[type="checkbox"]');
-          chk.addEventListener('change', () => {
-            if (chk.checked) {
-              item.classList.add('selected');
-              this.selectedWaypoints.push(poi);
-            } else {
-              item.classList.remove('selected');
-              this.selectedWaypoints = this.selectedWaypoints.filter(w => w.id !== poi.id);
-            }
-            this.updateRouteSummary(selectedRoute);
+            const chk = item.querySelector('input[type="checkbox"]');
+            chk.addEventListener('change', () => {
+              if (chk.checked) {
+                item.classList.add('selected');
+                this.selectedWaypoints.push(poi);
+              } else {
+                item.classList.remove('selected');
+                this.selectedWaypoints = this.selectedWaypoints.filter(w => w.id !== poi.id);
+              }
+              this.updateRouteSummary(selectedRoute);
+            });
+
+            listEl.appendChild(item);
           });
-
-          listEl.appendChild(item);
-        });
-      }
+        }
+      }).catch(err => {
+        console.warn('Corridor discovery notice:', err);
+        listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Ready for departure.</div>';
+      });
     };
 
-    await activateRoute(0);
+    activateRoute(0);
   }
 
   async handleOfflinePreCache() {

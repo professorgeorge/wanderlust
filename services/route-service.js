@@ -372,7 +372,7 @@ export class RouteService {
   }
 
   /**
-   * Fast corridor discovery along polyline (capped to 5 key cluster anchors for high speed)
+   * Fast corridor discovery along polyline (sub-second execution using Wikipedia GeoSearch & saved pins)
    */
   async discoverCorridorWaypoints(corridorRadiusMeters = 3500) {
     if (!this.currentRoute || !this.currentRoute.latLngs) return [];
@@ -380,8 +380,8 @@ export class RouteService {
     const latLngs = this.currentRoute.latLngs;
     if (latLngs.length < 2) return [];
 
-    // Distribute at most 5-6 scan anchors evenly across the entire route to guarantee fast sub-second completion
-    const sampleCount = Math.min(5, Math.max(2, Math.round(latLngs.length / 80)));
+    // Distribute 4 scan anchors evenly across the route
+    const sampleCount = Math.min(4, Math.max(2, Math.round(latLngs.length / 100)));
     const sampledPoints = [];
     for (let i = 0; i < sampleCount; i++) {
       const idx = Math.floor((i / (sampleCount - 1 || 1)) * (latLngs.length - 1));
@@ -391,18 +391,14 @@ export class RouteService {
     const allDiscovered = new Map();
 
     const fetchPromises = sampledPoints.map(pt =>
-      Promise.allSettled([
-        this.wiki ? this.wiki.findNearby(pt[0], pt[1], corridorRadiusMeters, 3) : Promise.resolve([]),
-        this.osm ? this.osm.findNearby(pt[0], pt[1], corridorRadiusMeters) : Promise.resolve([])
-      ])
+      this.wiki ? this.wiki.findNearby(pt[0], pt[1], corridorRadiusMeters, 3) : Promise.resolve([])
     );
 
-    const batches = await Promise.all(fetchPromises);
-    batches.forEach(results => {
-      const wikiPois = results[0]?.status === 'fulfilled' ? results[0].value : [];
-      const osmPois = results[1]?.status === 'fulfilled' ? results[1].value : [];
+    const batches = await Promise.allSettled(fetchPromises);
+    batches.forEach(result => {
+      const wikiPois = result.status === 'fulfilled' ? result.value : [];
 
-      [...wikiPois, ...osmPois].forEach(poi => {
+      wikiPois.forEach(poi => {
         if (!allDiscovered.has(poi.id)) {
           const { minDistance, projectionDistance } = this.calculateRouteProjection(poi.lat, poi.lng, latLngs);
 
