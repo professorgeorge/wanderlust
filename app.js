@@ -41,6 +41,7 @@ class WanderingLayerApp {
     this.carMarker = null;
     this.radiusCircle = null;
     this.poiMarkers = new Map();
+    this.pinMarkers = new Map();
     this.routePolyline = null;
     this.alternativePolylines = [];
     this.activeRouteIndex = 0;
