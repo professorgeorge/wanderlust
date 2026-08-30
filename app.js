@@ -1538,11 +1538,19 @@ class WanderingLayerApp {
       const selectedRoute = routes[idx];
       this.routeService.currentRoute = selectedRoute;
 
+      // 1. Immediately render polylines and cards on screen with zero lag
       this.renderAlternativeRoutePolylines(routes, idx, (newIdx) => activateRoute(newIdx));
       this.renderRouteOptionsCards(routes, idx, optionsContainer, (newIdx) => activateRoute(newIdx));
 
-      statusEl.innerHTML = `<span>Scanning corridor buffer for roadside wonders along <strong>Route ${idx + 1} (${selectedRoute.badge})</strong>...</span>`;
+      document.getElementById('offline-cache-row').style.display = 'flex';
+      document.getElementById('route-summary-banner').style.display = 'flex';
+      document.getElementById('route-simulate-btn').style.display = 'inline-block';
+      document.getElementById('export-gpx-btn').style.display = 'flex';
+      this.updateRouteSummary(selectedRoute);
 
+      statusEl.innerHTML = `<span>✓ Route selected: <strong>Route ${idx + 1} (${selectedRoute.badge})</strong> &bull; Scanning roadside highlights...</span>`;
+
+      // 2. Scan corridor in background without freezing UI
       const corridorPois = await this.routeService.discoverCorridorWaypoints(3500);
 
       statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders sequenced along Route ${idx + 1}:</span>`;
@@ -1590,12 +1598,6 @@ class WanderingLayerApp {
           listEl.appendChild(item);
         });
       }
-
-      document.getElementById('offline-cache-row').style.display = 'flex';
-      document.getElementById('route-summary-banner').style.display = 'flex';
-      document.getElementById('route-simulate-btn').style.display = 'inline-block';
-      document.getElementById('export-gpx-btn').style.display = 'flex';
-      this.updateRouteSummary(selectedRoute);
     };
 
     await activateRoute(0);
