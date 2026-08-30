@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wandering-layer-v9';
+const CACHE_NAME = 'wandering-layer-v10';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const ASSETS_TO_CACHE = [
   './services/osm-service.js',
   './services/wiki-service.js',
   './services/route-service.js',
+  './services/weather-service.js',
   './services/detour-budget.js',
   './services/voice.js',
   './services/journal-service.js',

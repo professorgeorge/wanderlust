@@ -1150,3 +1150,115 @@ main {
   background: #8a2be2;
   color: #fff;
 }
+
+/* Atmospheric Weather Badges & Corridor Forecaster */
+.hud-weather-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: #58a6ff;
+  font-size: 0.82rem;
+  background: rgba(88, 166, 255, 0.12);
+  padding: 2px 7px;
+  border-radius: 12px;
+  border: 1px solid rgba(88, 166, 255, 0.25);
+}
+
+.route-weather-preview {
+  margin-top: 12px;
+  background: rgba(13, 17, 23, 0.95);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+
+.weather-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.weather-preview-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.weather-corridor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+  gap: 8px;
+}
+
+.weather-cp-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: transform 0.2s, border-color 0.2s;
+}
+
+.weather-cp-card:hover {
+  border-color: var(--accent-blue);
+  transform: translateY(-1px);
+}
+
+.weather-cp-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-cp-eta {
+  font-size: 0.7rem;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.weather-cp-temp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2px 0;
+}
+
+.weather-cp-temp {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.weather-cp-icon {
+  font-size: 1.25rem;
+}
+
+.weather-cp-cond {
+  font-size: 0.72rem;
+  color: #c9d1d9;
+  line-height: 1.2;
+}
+
+.weather-hazard-chip {
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  display: inline-block;
+}
+

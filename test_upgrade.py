@@ -152,6 +152,28 @@ def test_multi_route_alternatives_and_scoring():
 
             print(f"  -> Route {idx + 1}: {dist_km} km ({dur_mins}m) | Curvature Ratio: {curvature_ratio} deg/km | Comfort: {comfort_score}/100 | Scenic Score: {scenic_score}/100")
 
+def test_weather_service_and_route_forecast():
+    print("\n--- Testing Open-Meteo Real-Time Weather & Predictive Route Forecasts ---")
+    lat, lng = 37.7749, -122.4194 # San Francisco
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lng}&current=temperature_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m,visibility&hourly=temperature_2m,precipitation_probability,weather_code,visibility&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_hours=12"
+    req = urllib.request.Request(url, headers={'User-Agent': 'TheWanderingLayer/2.0'})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+        curr = data.get('current', {})
+        temp = curr.get('temperature_2m')
+        code = curr.get('weather_code')
+        wind = curr.get('wind_speed_10m')
+        print(f"[OK] Live Weather Response: {temp}°F, WMO Code: {code}, Wind: {wind} mph")
+        assert temp is not None, "Temperature missing"
+        assert code is not None, "Weather code missing"
+
+    # En-route forecast checkpoint verification
+    hourly = data.get('hourly', {})
+    temps = hourly.get('temperature_2m', [])
+    precip_probs = hourly.get('precipitation_probability', [])
+    assert len(temps) >= 12, "Expected at least 12 forecast hours"
+    print(f"[OK] En-Route Hourly Forecast: Next 4 hours: {temps[:4]}°F, Precip Prob: {precip_probs[:4]}%")
+
 def test_html_and_js_integrity():
     print("\n--- Testing HTML DOM & JS Element Bindings Integrity ---")
     with open('index.html', 'r', encoding='utf-8') as f:
@@ -180,6 +202,7 @@ if __name__ == '__main__':
     test_topological_sorting()
     test_backup_restore_schema()
     test_multi_route_alternatives_and_scoring()
+    test_weather_service_and_route_forecast()
     test_html_and_js_integrity()
-    print("\nAll multi-route scenic evaluations and architectural tests passed successfully!")
+    print("\nAll weather intelligence and architectural verification tests passed successfully!")
 

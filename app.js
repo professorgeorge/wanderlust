@@ -10,11 +10,13 @@ import { HeartbeatService } from './services/heartbeat.js';
 import { JournalService } from './services/journal-service.js';
 import { PersonaService } from './services/personas.js';
 import { RouteService } from './services/route-service.js';
+import { WeatherService } from './services/weather-service.js';
 
 class WanderingLayerApp {
   constructor() {
     this.storage = new StorageService();
     this.pinsService = new PinsService(this.storage);
+    this.weather = new WeatherService();
 
     // Global Audience: Unit System & Language Preferences
     const savedUnits = localStorage.getItem('unit_system');
@@ -556,6 +558,14 @@ class WanderingLayerApp {
         this.renderAlternativeRoutePolylines(routes, selectedIdx, (newIdx) => launchSimulationForRoute(newIdx));
         this.renderRouteOptionsCards(routes, selectedIdx, simOptionsContainer, (newIdx) => launchSimulationForRoute(newIdx));
 
+        // Predictive Route Weather Corridor Forecast
+        try {
+          const simWeatherPreview = document.getElementById('sim-route-weather-preview');
+          this.weather.getRouteWeatherForecast(route.latLngs, route.durationMinutes, this.unitSystem).then(fc => {
+            this.renderRouteWeatherPreview(fc, simWeatherPreview);
+          });
+        } catch (e) {}
+
         // Populate navigation transfer links
         document.getElementById('sim-gmaps-link').href = this.routeService.generateGoogleMapsUrl(startCoords, endCoords, []);
         document.getElementById('sim-apple-link').href = this.routeService.generateAppleMapsUrl(startCoords, endCoords, []);
@@ -572,7 +582,7 @@ class WanderingLayerApp {
         
         setTimeout(() => {
           simModal.classList.remove('active');
-        }, 600);
+        }, 800);
 
         document.getElementById('hud-status').textContent = 'Simulating Route';
         startBtn.classList.add('tracking');
@@ -840,7 +850,7 @@ class WanderingLayerApp {
     document.getElementById('pin-modal').classList.add('active');
   }
 
-  updateContextHUD(lat, lng) {
+  async updateContextHUD(lat, lng) {
     const phase = this.context.getTimePhase(lat, lng);
     const iconEl = document.getElementById('hud-moment-icon');
     const textEl = document.getElementById('hud-moment-text');
@@ -849,6 +859,24 @@ class WanderingLayerApp {
 
     const oledMoment = document.getElementById('hud-mode-moment');
     if (oledMoment) oledMoment.textContent = `${phase.icon} ${phase.label.toUpperCase()}`;
+
+    // Real-Time Atmospheric Weather
+    try {
+      const weather = await this.weather.getCurrentWeather(lat, lng, this.unitSystem);
+      if (weather) {
+        const wIcon = document.getElementById('hud-weather-icon');
+        const wTemp = document.getElementById('hud-weather-temp');
+        if (wIcon) wIcon.textContent = weather.icon;
+        if (wTemp) wTemp.textContent = weather.tempDisplay;
+
+        const oledWeather = document.getElementById('oled-weather-badge');
+        if (oledWeather) {
+          oledWeather.textContent = `${weather.icon} ${weather.tempDisplay} ${weather.condition.toUpperCase()}`;
+        }
+      }
+    } catch (e) {
+      console.warn('Weather HUD update notice:', e);
+    }
   }
 
   async handleLocationUpdate(pos) {
@@ -937,7 +965,7 @@ class WanderingLayerApp {
       poi.relativeBearing = this.gps.getRelativeDirection(poi.lat, poi.lng);
       poi.inForwardCone = this.gps.isInForwardCone(poi.lat, poi.lng);
       poi.detour = this.budget.formatDetourBadge(poi.dist);
-      poi.moment = this.context.evaluatePoiMoment(poi, carLat, carLng);
+      poi.moment = this.context.evaluatePoiMoment(poi, carLat, carLng, this.weather?.currentWeather);
     });
     this.currentPois.sort((a, b) => a.dist - b.dist);
     this.renderFeed();
@@ -1495,6 +1523,38 @@ class WanderingLayerApp {
     }
   }
 
+  renderRouteWeatherPreview(forecastList, containerEl) {
+    if (!containerEl) return;
+    if (!forecastList || forecastList.length === 0) {
+      containerEl.style.display = 'none';
+      return;
+    }
+
+    containerEl.style.display = 'block';
+    containerEl.innerHTML = `
+      <div class="weather-preview-header">
+        <span class="weather-preview-title">
+          <span>🌤️ En-Route Predictive Weather Forecast</span>
+        </span>
+        <span style="font-size: 0.72rem; color: var(--text-muted);">Predictions at estimated waypoint arrival</span>
+      </div>
+      <div class="weather-corridor-grid">
+        ${forecastList.map(cp => `
+          <div class="weather-cp-card">
+            <div class="weather-cp-label">${cp.label}</div>
+            <div class="weather-cp-eta">${cp.etaDisplay}</div>
+            <div class="weather-cp-temp-row">
+              <span class="weather-cp-temp">${cp.tempDisplay}</span>
+              <span class="weather-cp-icon">${cp.icon}</span>
+            </div>
+            <div class="weather-cp-cond">${cp.condition}</div>
+            ${cp.hazardNote ? `<span class="weather-hazard-chip">${cp.hazardNote}</span>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
   async handleRouteScan() {
     const originInput = document.getElementById('route-origin-input').value.trim().replace(/^📍\s*/, '');
     const destInput = document.getElementById('route-dest-input').value.trim();
@@ -1542,6 +1602,16 @@ class WanderingLayerApp {
       this.renderAlternativeRoutePolylines(routes, idx, (newIdx) => activateRoute(newIdx));
       this.renderRouteOptionsCards(routes, idx, optionsContainer, (newIdx) => activateRoute(newIdx));
 
+      // 2. Predictive En-Route Weather Forecast
+      try {
+        const weatherPreviewEl = document.getElementById('route-weather-preview');
+        this.weather.getRouteWeatherForecast(selectedRoute.latLngs, selectedRoute.durationMinutes, this.unitSystem).then(fc => {
+          this.renderRouteWeatherPreview(fc, weatherPreviewEl);
+        });
+      } catch (e) {
+        console.warn('Weather forecast notice:', e);
+      }
+
       document.getElementById('offline-cache-row').style.display = 'flex';
       document.getElementById('route-summary-banner').style.display = 'flex';
       document.getElementById('route-simulate-btn').style.display = 'inline-block';
@@ -1550,7 +1620,7 @@ class WanderingLayerApp {
 
       statusEl.innerHTML = `<span>✓ Route selected: <strong>Route ${idx + 1} (${selectedRoute.badge})</strong> &bull; Scanning roadside highlights...</span>`;
 
-      // 2. Scan corridor in background without freezing UI
+      // 3. Scan corridor in background without freezing UI
       const corridorPois = await this.routeService.discoverCorridorWaypoints(3500);
 
       statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders sequenced along Route ${idx + 1}:</span>`;

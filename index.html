@@ -115,10 +115,15 @@
           </div>
         </div>
 
-        <!-- Detour Slack & Context Pill -->
+        <!-- Detour Slack, Weather & Context Pill -->
         <div class="budget-pill">
           <span id="hud-moment-icon">🌄</span>
           <span id="hud-moment-text">Morning</span>
+          <span style="color: var(--border); opacity: 0.5;">|</span>
+          <span id="hud-weather-pill" class="hud-weather-badge" title="Current Real-Time Weather">
+            <span id="hud-weather-icon">☀️</span>
+            <span id="hud-weather-temp">--°</span>
+          </span>
           <span style="color: var(--border); opacity: 0.5;">|</span>
           <label for="hud-budget-slider">Slack: <span id="hud-budget-val">20m</span></label>
           <input type="range" id="hud-budget-slider" min="0" max="60" step="5" value="20" title="Detour Budget Slack">
@@ -186,6 +191,7 @@
       <div class="hud-badge-group">
         <span class="hud-status-chip">🧭 WANDERING COMPANION</span>
         <span id="hud-mode-moment" class="hud-moment-chip">✨ GOLDEN HOUR</span>
+        <span id="oled-weather-badge" class="hud-moment-chip" style="border-color: #58a6ff; color: #79c0ff;">☀️ --°</span>
       </div>
       <button id="exit-hud-btn" class="hud-close-btn">&times; Exit HUD</button>
     </div>
@@ -304,6 +310,9 @@
       <!-- Multiple Route Choice Cards with Scenic & Comfort Scores -->
       <div id="route-options-container" class="route-options-container" style="display: none;"></div>
 
+      <!-- En-Route Predictive Weather Forecast Strip -->
+      <div id="route-weather-preview" class="route-weather-preview" style="display: none;"></div>
+
       <!-- Offline Pre-Cache Banner -->
       <div id="offline-cache-row" style="display: none; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; margin-top: 10px; align-items: center; justify-content: space-between;">
         <div>
@@ -396,6 +405,9 @@
 
       <!-- Multiple Route Choice Cards for Simulation -->
       <div id="sim-route-options-container" class="route-options-container" style="display: none;"></div>
+
+      <!-- Simulation En-Route Predictive Weather Forecast Strip -->
+      <div id="sim-route-weather-preview" class="route-weather-preview" style="display: none;"></div>
 
       <button id="start-sim-action" class="btn-start" style="margin-top: 10px; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%);">
         🚗 Calculate Route & Start Simulated Drive

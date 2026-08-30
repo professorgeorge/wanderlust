@@ -67,19 +67,45 @@ export class ContextService {
   }
 
   /**
-   * Score a POI for its contextual relevance right now
+   * Score a POI for its contextual relevance right now (solar time + live weather)
    * @param {Object} poi - POI object
    * @param {number} lat - Car latitude
    * @param {number} lng - Car longitude
+   * @param {Object|null} weather - Live weather object
    * @returns {Object|null} Context badge information if particularly attractive right now
    */
-  evaluatePoiMoment(poi, lat, lng) {
+  evaluatePoiMoment(poi, lat, lng, weather = null) {
     const phase = this.getTimePhase(lat, lng);
     const title = (poi.title || '').toLowerCase();
     const extract = (poi.extract || '').toLowerCase();
     const type = (poi.type || '').toLowerCase();
 
-    // Check specific combinations
+    // 1. Weather-driven contextual moments
+    if (weather) {
+      if (weather.severity === 'fog' && (type === 'viewpoint' || title.includes('bridge') || title.includes('forest') || title.includes('mountain'))) {
+        return {
+          badge: '🌫️ MISTY ATMOSPHERIC SPOT',
+          note: 'Ethereal fog and cloud cover envelop this landmark right now',
+          priority: true
+        };
+      }
+      if ((weather.severity === 'rain_light' || weather.severity === 'rain_mod') && (title.includes('bakery') || title.includes('tea') || title.includes('museum') || title.includes('temple') || title.includes('church'))) {
+        return {
+          badge: '🌧️ RAINY DAY COZY RETREAT',
+          note: 'Sheltered indoor discovery out of the wet road conditions',
+          priority: true
+        };
+      }
+      if (weather.severity === 'clear' && phase.id === 'golden_hour' && (type === 'viewpoint' || title.includes('overlook') || title.includes('bluff') || title.includes('peak') || title.includes('beach'))) {
+        return {
+          badge: '✨ PERFECT SUNSET CLARITY',
+          note: 'Pristine clear skies with optimal golden sunlight alignment',
+          priority: true
+        };
+      }
+    }
+
+    // 2. Solar time-of-day moments
     if (phase.id === 'golden_hour') {
       if (type === 'viewpoint' || title.includes('viewpoint') || title.includes('peak') || title.includes('lake') || title.includes('overlook')) {
         return {
@@ -99,8 +125,8 @@ export class ContextService {
     } else if (phase.id === 'dawn_morning') {
       if (type === 'viewpoint' || title.includes('mist') || title.includes('sanctuary') || title.includes('valley') || extract.includes('reserve') || title.includes('temple')) {
         return {
-          badge: '🌄 MORNING MIST & SERENITY',
-          note: 'Best experienced in the tranquil morning light',
+          badge: '🌄 SERENE MORNING VIEW',
+          note: 'Tranquil lighting and peaceful morning atmosphere',
           priority: true
         };
       }
@@ -113,11 +139,11 @@ export class ContextService {
         };
       }
     } else if (phase.id === 'night') {
-      if (type === 'viewpoint' || title.includes('observatory') || title.includes('peak')) {
+      if (title.includes('observatory') || title.includes('bridge') || title.includes('fort') || title.includes('monument') || extract.includes('stargazing')) {
         return {
-          badge: '🌌 NIGHT SKY OUTPOST',
-          note: 'Elevated panorama away from highway glare',
-          priority: true
+          badge: '🌌 NIGHTTIME ATMOSPHERE',
+          note: 'Illuminated structures or quiet dark-sky stargazing',
+          priority: false
         };
       }
     }
