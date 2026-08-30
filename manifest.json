@@ -1,0 +1,16 @@
+{
+  "name": "The Wandering Layer",
+  "short_name": "WanderLayer",
+  "description": "The Map Beyond the Directions: GPS Audio Companion for roadside discoveries & detours",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/feathericons/feather/master/icons/compass.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

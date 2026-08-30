@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>The Wandering Layer — The Map Beyond the Directions</title>
+  <meta name="description" content="A zero-cost GPS audio-companion that whispers stories, viewpoints, waterfalls, and footnotes alongside Google Maps.">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d1117">
+  
+  <!-- Leaflet Map CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- App Styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-group">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e3b341" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
+      </svg>
+      <div>
+        <h1>The Wandering Layer</h1>
+        <div class="subtitle">The Map Beyond The Directions</div>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <!-- Drop Wonder Pin Button -->
+      <button id="drop-pin-btn" class="icon-btn" title="Drop a Wonder Pin (Roadside Secret)">
+        <span style="color: #d2a8ff;">✨</span>
+        <span>Wonder Pin</span>
+      </button>
+
+      <!-- Minimal Driving HUD Toggle -->
+      <button id="hud-mode-btn" class="icon-btn" title="Toggle OLED Driving HUD Mode">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        <span>HUD Mode</span>
+      </button>
+
+      <!-- Mute / Unmute Button -->
+      <button id="mute-btn" class="icon-btn" title="Mute Audio Narration">
+        <svg id="mute-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
+        <span id="mute-label">Audio On</span>
+      </button>
+
+      <!-- Route Builder / Itinerary Planner Button -->
+      <button id="route-btn" class="icon-btn" title="Build Scenic Route with Google Maps Waypoints">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="6" cy="19" r="3"></circle>
+          <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"></path>
+          <circle cx="18" cy="5" r="3"></circle>
+        </svg>
+        <span>Plan Route</span>
+      </button>
+
+      <!-- Scrapbook / Travel Journal Button -->
+      <button id="scrapbook-btn" class="icon-btn" title="View Road Trip Journal">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>Scrapbook</span>
+      </button>
+
+      <!-- Simulation Selector -->
+      <button id="sim-btn" class="icon-btn" title="Simulate Scenic Drive">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <span>Simulation</span>
+      </button>
+
+      <!-- Settings Button -->
+      <button id="settings-btn" class="icon-btn" title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content View -->
+  <main>
+    <!-- Map & HUD Viewport -->
+    <div id="map-container">
+      <div id="map"></div>
+
+      <!-- Floating In-Car HUD -->
+      <div class="hud-overlay">
+        <div class="hud-pill">
+          <div>
+            <span id="hud-speed" class="speed-metric">0</span>
+            <span class="speed-unit">km/h</span>
+          </div>
+          <div style="color: var(--border); opacity: 0.5;">|</div>
+          <div>
+            <span id="hud-heading" style="font-size: 0.8rem; font-weight: 700; color: var(--accent-cyan);">🧭 N</span>
+          </div>
+          <div style="color: var(--border); opacity: 0.5;">|</div>
+          <div class="status-indicator">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="hud-status">Standby</span>
+          </div>
+        </div>
+
+        <!-- Detour Slack & Context Pill -->
+        <div class="budget-pill">
+          <span id="hud-moment-icon">🌄</span>
+          <span id="hud-moment-text">Morning</span>
+          <span style="color: var(--border); opacity: 0.5;">|</span>
+          <label for="hud-budget-slider">Slack: <span id="hud-budget-val">20m</span></label>
+          <input type="range" id="hud-budget-slider" min="0" max="60" step="5" value="20" title="Detour Budget Slack">
+        </div>
+
+        <!-- Live Narration Banner -->
+        <div id="speaking-banner" class="speaking-banner">
+          <div class="audio-waves">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <span id="speaking-text">Narrating landmark...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Discovery Feed (Right Sidebar) -->
+    <section class="feed-panel">
+      <div class="feed-header">
+        <h2>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+            <circle cx="12" cy="10" r="3"></circle>
+          </svg>
+          Roadside Whispers
+        </h2>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span id="feed-count" class="feed-count">0 Nearby</span>
+        </div>
+      </div>
+
+      <!-- Dynamic Cards -->
+      <div id="feed-scroll" class="feed-scroll">
+        <div class="empty-feed">
+          <div class="icon">🧭</div>
+          <h3>Pure Wandering Mode</h3>
+          <p><strong>No destination or navigation app required.</strong> Simply tap <strong>"Start Journey"</strong> and drive anywhere. The app tracks your live location and whispers stories of whatever landscape you pass through.</p>
+        </div>
+      </div>
+
+      <!-- Start / Stop Driving Action Bar -->
+      <div class="journey-bar">
+        <button id="start-journey-btn" class="btn-start">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>Start Journey (Live GPS)</span>
+        </button>
+      </div>
+
+      <!-- Fine Print Credit & Disclaimer -->
+      <footer class="app-fine-print">
+        <div class="credit-line">
+          Conceptualized &amp; Developed by <a href="https://www.linkedin.com/in/beingbabu/" target="_blank" rel="noopener noreferrer">Babu George</a>
+        </div>
+        <div class="disclaimer-line">
+          <span>⚠️ <strong>Disclaimer:</strong> For educational &amp; cultural exploration only. The creators assume no liability or responsibility for navigation decisions, road conditions, or incidents. Drive safely and obey all traffic laws.</span>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <!-- Fullscreen Minimalist OLED Driving HUD Overlay -->
+  <div id="driving-hud-view" class="driving-hud-view" style="display: none;">
+    <div class="hud-header">
+      <div class="hud-badge-group">
+        <span class="hud-status-chip">🧭 WANDERING COMPANION</span>
+        <span id="hud-mode-moment" class="hud-moment-chip">✨ GOLDEN HOUR</span>
+      </div>
+      <button id="exit-hud-btn" class="hud-close-btn">&times; Exit HUD</button>
+    </div>
+
+    <div class="hud-center-content">
+      <div class="hud-speed-display">
+        <div id="oled-speed" class="oled-speed-val">0</div>
+        <div class="oled-speed-lbl">KM / H</div>
+      </div>
+
+      <div class="hud-card-display">
+        <div id="oled-poi-type" class="oled-poi-tag">📖 HISTORIC FOOTNOTE</div>
+        <h2 id="oled-poi-title" class="oled-poi-headline">Neriamangalam Arch Bridge</h2>
+        <div class="oled-poi-meta">
+          <span id="oled-poi-bearing" style="color: var(--accent-cyan);">Straight Ahead</span>
+          <span>&bull;</span>
+          <span id="oled-poi-dist">800m</span>
+          <span>&bull;</span>
+          <span id="oled-poi-detour" style="color: var(--accent-gold);">+5m Detour</span>
+        </div>
+        <p id="oled-poi-extract" class="oled-poi-text">Known as the Gateway to the High Ranges, built in 1935 across the Periyar River.</p>
+      </div>
+    </div>
+
+    <div class="hud-actions-row">
+      <button id="oled-speak-btn" class="oled-action-btn primary">
+        🔊 Speak Story Now
+      </button>
+      <a id="oled-detour-btn" href="#" target="_blank" rel="noopener noreferrer" class="oled-action-btn detour">
+        🚗 Google Maps Detour &rarr;
+      </a>
+      <button id="oled-pin-btn" class="oled-action-btn secondary">
+        ✨ Drop Pin Here
+      </button>
+    </div>
+  </div>
+
+  <!-- Drop Wonder Pin Modal -->
+  <div id="pin-modal" class="modal">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3>✨ Drop a Wonder Pin</h3>
+        <button id="close-pin-btn" class="close-btn">&times;</button>
+      </div>
+      <div class="setting-row">
+        <label>Category:</label>
+        <select id="pin-category-select">
+          <option value="vista">🌄 Scenic Vista / Valley Lookout</option>
+          <option value="secret_stop">✨ Secret Bench / Quiet Grove</option>
+          <option value="lore">📜 Local Folklore / Historic Tree</option>
+          <option value="food_craft">🍞 Roadside Bakery / Warm Tea Stall</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>Wonder Name / Title:</label>
+        <input type="text" id="pin-title-input" placeholder="e.g. Quiet Pine Ridge Sunset Overlook">
+      </div>
+      <div class="setting-row">
+        <label>Roadside Note / Story:</label>
+        <textarea id="pin-note-input" rows="3" placeholder="What makes this spot special? (e.g. Fresh ginger tea at 4pm, quiet clearing past the bend)"></textarea>
+      </div>
+      <div style="display: flex; gap: 10px; margin-top: 12px;">
+        <button id="save-pin-btn" class="btn-start" style="background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%);">
+          Save Wonder Pin
+        </button>
+      </div>
+      <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 0.8rem; color: var(--text-muted);">Share with fellow travelers:</span>
+        <div style="display: flex; gap: 8px;">
+          <button id="export-pins-geojson-btn" class="icon-btn">📥 Export GeoJSON</button>
+          <label class="icon-btn" style="cursor: pointer;">
+            📤 Import GeoJSON
+            <input type="file" id="import-pins-file" accept=".geojson,.json" style="display: none;">
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wandering Route Builder Modal -->
+  <div id="route-modal" class="modal">
+    <div class="modal-card" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>🧭 Wandering Route Builder</h3>
+        <button id="close-route-btn" class="close-btn">&times;</button>
+      </div>
+
+      <!-- Origin & Destination Inputs with Live Autocomplete -->
+      <div class="route-input-group">
+        <div class="route-input-row">
+          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🟢</span>
+          <div class="autocomplete-container">
+            <input type="text" id="route-origin-input" placeholder="Origin (e.g. city, address, or tap '📍 Here')" autocomplete="off">
+            <div id="origin-suggestions" class="autocomplete-dropdown"></div>
+          </div>
+          <button id="route-my-loc-btn" class="icon-btn" title="Use My Current GPS Location">📍 Here</button>
+        </div>
+        <div class="route-input-row">
+          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🔴</span>
+          <div class="autocomplete-container">
+            <input type="text" id="route-dest-input" placeholder="Destination (e.g. city, landmark, or national park)" autocomplete="off">
+            <div id="dest-suggestions" class="autocomplete-dropdown"></div>
+          </div>
+          <button id="route-scan-btn" class="btn-start" style="padding: 10px 16px; font-size: 0.85rem; width: auto; flex: none;">
+            🔍 Scan Corridor
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading / Status indicator -->
+      <div id="route-status" style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+        <span>Type an origin and destination (or tap <strong>"📍 Here"</strong>), then scan for roadside wonders along your route.</span>
+      </div>
+
+      <!-- Multiple Route Choice Cards with Scenic & Comfort Scores -->
+      <div id="route-options-container" class="route-options-container" style="display: none;"></div>
+
+      <!-- Offline Pre-Cache Banner -->
+      <div id="offline-cache-row" style="display: none; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; margin-top: 10px; align-items: center; justify-content: space-between;">
+        <div>
+          <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-main);">💾 Mountain & Canyon Offline Cache</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">Save all stories along this route into your phone for zero-signal mountain zones.</div>
+        </div>
+        <button id="cache-route-offline-btn" class="icon-btn" style="background: #238636; border-color: #2ea043; color: #fff; font-weight: 600;">
+          Save Offline
+        </button>
+      </div>
+
+      <!-- Route Statistics Summary -->
+      <div id="route-summary-banner" class="route-summary-banner" style="display: none;">
+        <div class="route-stat-item">
+          <span id="route-summary-dist" class="route-stat-val">125 km</span>
+          <span class="route-stat-lbl">Distance</span>
+        </div>
+        <div class="route-stat-item">
+          <span id="route-summary-direct" class="route-stat-val">2h 15m</span>
+          <span class="route-stat-lbl">Direct Drive</span>
+        </div>
+        <div class="route-stat-item">
+          <span id="route-summary-total" class="route-stat-val" style="color: var(--accent-gold);">2h 45m</span>
+          <span class="route-stat-lbl">With Sequenced Stops</span>
+        </div>
+        <div class="route-stat-item">
+          <span id="route-summary-stops" class="route-stat-val">2</span>
+          <span class="route-stat-lbl">Stops Added</span>
+        </div>
+      </div>
+
+      <!-- Corridor Waypoint Candidate Checklist -->
+      <div id="corridor-list" class="corridor-list"></div>
+
+      <!-- Action Buttons -->
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+        <button id="route-simulate-btn" class="btn-start" style="padding: 10px 16px; font-size: 0.85rem; width: auto; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%); display: none;">
+          🚗 Simulate Drive On This Route
+        </button>
+        <a id="launch-gmaps-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="display: none;">
+          🗺️ Google Maps &rarr;
+        </a>
+        <a id="launch-apple-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="background: linear-gradient(135deg, #30363d 0%, #484f58 100%); display: none;">
+          🍏 Apple Maps
+        </a>
+        <button id="export-gpx-btn" class="btn-gpx-export" style="display: none;">
+          📥 Save GPX
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simulation Settings Modal -->
+  <div id="sim-modal" class="modal">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <h3>🚗 Custom Road Trip Simulator</h3>
+        <button id="close-sim-btn" class="close-btn">&times;</button>
+      </div>
+
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+        Simulate driving along any route worldwide. Test voice alerts, forward cone filtering, and spontaneous detours without being on the road.
+      </p>
+
+      <!-- Origin & Destination Inputs with Live Autocomplete -->
+      <div class="route-input-group">
+        <div class="route-input-row">
+          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🟢</span>
+          <div class="autocomplete-container">
+            <input type="text" id="sim-origin-input" placeholder="Origin (e.g. city, address, or tap '📍 Here')" autocomplete="off">
+            <div id="sim-origin-suggestions" class="autocomplete-dropdown"></div>
+          </div>
+          <button id="sim-my-loc-btn" class="icon-btn" title="Use My Current GPS Location">📍 Here</button>
+        </div>
+        <div class="route-input-row">
+          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🔴</span>
+          <div class="autocomplete-container">
+            <input type="text" id="sim-dest-input" placeholder="Destination (e.g. national park, city, landmark)" autocomplete="off">
+            <div id="sim-dest-suggestions" class="autocomplete-dropdown"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-row" style="margin-top: 14px;">
+        <label>Simulation Speed: <span id="sim-speed-val">3x (Cruising Speed)</span></label>
+        <input type="range" id="sim-speed-slider" min="1" max="10" value="3">
+      </div>
+
+      <div id="sim-status" style="font-size: 0.82rem; color: var(--text-muted); margin: 6px 0;"></div>
+
+      <!-- Multiple Route Choice Cards for Simulation -->
+      <div id="sim-route-options-container" class="route-options-container" style="display: none;"></div>
+
+      <button id="start-sim-action" class="btn-start" style="margin-top: 10px; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%);">
+        🚗 Calculate Route & Start Simulated Drive
+      </button>
+
+      <!-- Transfer Navigation App Links for Simulated Trip -->
+      <div id="sim-nav-row" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+        <label style="font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 8px;">Transfer this trip to navigation app:</label>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <a id="sim-gmaps-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="flex: 1; min-width: 140px; font-size: 0.8rem; justify-content: center;">
+            🗺️ Google Maps
+          </a>
+          <a id="sim-apple-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="flex: 1; min-width: 140px; font-size: 0.8rem; justify-content: center; background: linear-gradient(135deg, #30363d 0%, #484f58 100%);">
+            🍏 Apple Maps
+          </a>
+          <button id="sim-export-gpx-btn" class="btn-gpx-export" style="flex: 1; min-width: 110px; font-size: 0.8rem; justify-content: center;">
+            📥 Save GPX
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Road Trip Scrapbook Modal -->
+  <div id="scrapbook-modal" class="modal">
+    <div class="modal-card" style="max-width: 650px;">
+      <div class="modal-header">
+        <h3>📖 Road Trip Serendipity Scrapbook</h3>
+        <button id="close-scrapbook-btn" class="close-btn">&times;</button>
+      </div>
+
+      <!-- Stats Summary -->
+      <div class="scrapbook-stats">
+        <div class="stat-box">
+          <div id="stat-dist" class="stat-val">0.0</div>
+          <div class="stat-label">km Scanned</div>
+        </div>
+        <div class="stat-box">
+          <div id="stat-time" class="stat-val">0m</div>
+          <div class="stat-label">Duration</div>
+        </div>
+        <div class="stat-box">
+          <div id="stat-pois" class="stat-val">0</div>
+          <div class="stat-label">Discoveries</div>
+        </div>
+        <div class="stat-box">
+          <div id="stat-stories" class="stat-val">0</div>
+          <div class="stat-label">Whispered</div>
+        </div>
+      </div>
+
+      <!-- Chronological Timeline -->
+      <div id="scrapbook-timeline" class="scrapbook-timeline">
+        <div class="empty-feed">
+          <p>No roadside landmarks logged yet. Start driving or run a simulation to compile your journal!</p>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button id="export-journal-btn" class="btn-start" style="background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);">
+          📥 Download Journal (.md)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Settings & Preferences</h3>
+        <button id="close-settings-btn" class="close-btn">&times;</button>
+      </div>
+
+      <!-- Units of Measurement Selector -->
+      <div class="setting-row">
+        <label>Units of Measurement:</label>
+        <select id="unit-system-select">
+          <option value="imperial">Miles & MPH (US, UK, etc.)</option>
+          <option value="metric">Kilometers & KM/H (Metric — Global)</option>
+        </select>
+        <div class="setting-desc">Speed, voice alerts, radius sliders, and trip journals will convert automatically.</div>
+      </div>
+
+      <!-- Knowledge & Story Language Selector -->
+      <div class="setting-row">
+        <label>Knowledge & Story Language:</label>
+        <select id="knowledge-lang-select">
+          <option value="en">English (Global)</option>
+          <option value="es">Español (Spanish)</option>
+          <option value="fr">Français (French)</option>
+          <option value="de">Deutsch (German)</option>
+          <option value="it">Italiano (Italian)</option>
+          <option value="pt">Português (Portuguese)</option>
+          <option value="ja">日本語 (Japanese)</option>
+          <option value="hi">हिन्दी (Hindi)</option>
+          <option value="zh">中文 (Chinese)</option>
+          <option value="ml">മലയാളം (Malayalam)</option>
+          <option value="ar">العربية (Arabic)</option>
+        </select>
+        <div class="setting-desc">Queries regional Wikipedia and Wikivoyage stories in your preferred language.</div>
+      </div>
+
+      <!-- Forward Heading Cone Filter Toggle -->
+      <div class="setting-row">
+        <label style="display: flex; align-items: center; justify-content: space-between;">
+          <span>Forward Cone Filter (Ahead of Vehicle)</span>
+          <input type="checkbox" id="forward-cone-toggle" checked style="width: auto;">
+        </label>
+        <div class="setting-desc">Only alert for landmarks in front of your vehicle (±60°), ignoring spots already passed or behind you.</div>
+      </div>
+
+      <!-- Companion Persona Selector -->
+      <div class="setting-row">
+        <label>Companion Persona (Voice Archetype):</label>
+        <select id="persona-select">
+          <option value="wanderer">✨ The Contemplative Wanderer (Poetic, reflective)</option>
+          <option value="folklorist">📜 The Local Folklorist (Myths, legends, oral lore)</option>
+          <option value="naturalist">🌿 The Naturalist & Geologist (Landforms, ecology)</option>
+          <option value="historian">🏛️ The Highway Historian (Trade routes, engineering)</option>
+        </select>
+        <div id="persona-desc" class="setting-desc">Poetic, curious, and reflective of the landscape beyond the directions.</div>
+      </div>
+
+      <!-- Ephemeral Time Phase Simulator Override -->
+      <div class="setting-row">
+        <label>Time-of-Day Context (Ephemeral Moments):</label>
+        <select id="time-phase-select">
+          <option value="auto">Auto (Current Real-Time Clock)</option>
+          <option value="6.5">🌄 Early Morning Mist (6:30 AM)</option>
+          <option value="13.0">🌿 Midday Heat & Waterfalls (1:00 PM)</option>
+          <option value="18.0">✨ Golden Hour & Sunset Overlooks (6:00 PM)</option>
+          <option value="22.0">🌌 Night & Stargazing Outposts (10:00 PM)</option>
+        </select>
+        <div class="setting-desc">Simulate how the app highlights different attractions at different hours of the day.</div>
+      </div>
+
+      <!-- Budget Slack Filter Toggle -->
+      <div class="setting-row">
+        <label style="display: flex; align-items: center; justify-content: space-between;">
+          <span>Filter Stops by Detour Slack</span>
+          <input type="checkbox" id="budget-filter-toggle" style="width: auto;">
+        </label>
+        <div class="setting-desc">Only show stops on the map and feed that fit comfortably in your detour time budget.</div>
+      </div>
+
+      <div class="setting-row">
+        <label>Base Discovery Radius: <span id="radius-val">2.0 mi</span></label>
+        <input type="range" id="radius-slider" min="500" max="10000" step="500" value="3000">
+        <div class="setting-desc">Base scan radius (scales automatically at highway speeds).</div>
+      </div>
+
+      <div class="setting-row">
+        <label>Narration Frequency (Cooldown): <span id="cooldown-val">3 mins</span></label>
+        <input type="range" id="cooldown-slider" min="60" max="600" step="30" value="180">
+        <div class="setting-desc">Minimum time between automatic spoken alerts to avoid driver fatigue.</div>
+      </div>
+
+      <div class="setting-row">
+        <label>Narration Depth:</label>
+        <select id="narration-depth">
+          <option value="rich">Rich Storytelling (2-3 sentences)</option>
+          <option value="concise">Concise Alerts (1 brief sentence)</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <label>Device Voice Selection:</label>
+        <select id="voice-select"></select>
+      </div>
+
+      <!-- Data Backup & Multi-Device Transfer -->
+      <div class="setting-row" style="border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px;">
+        <label>Data Backup & Multi-Device Transfer:</label>
+        <div class="setting-desc" style="margin-bottom: 10px;">Export all your custom wonder pins, travel journals, and preferences to a portable backup file, or restore them onto another phone, laptop, or browser.</div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button id="export-full-backup-btn" class="btn-start" style="padding: 10px 14px; font-size: 0.85rem; width: auto; flex: 1; min-width: 140px; background: linear-gradient(135deg, #238636 0%, #2ea043 100%);">
+            💾 Download Backup (.json)
+          </button>
+          <label class="icon-btn" style="padding: 10px 14px; font-size: 0.85rem; width: auto; flex: 1; min-width: 140px; text-align: center; cursor: pointer; display: flex; align-items: center; justify-content: center; background: #21262d; border: 1px solid #30363d;">
+            📂 Restore Backup
+            <input type="file" id="import-backup-file" accept=".json,application/json" style="display: none;">
+          </label>
+        </div>
+        <div id="backup-status-msg" style="font-size: 0.8rem; margin-top: 8px; display: none;"></div>
+      </div>
+
+      <!-- Conceptualization Credit & Comprehensive Legal Disclaimer -->
+      <div class="setting-row" style="border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px; font-size: 0.8rem; color: var(--text-muted); line-height: 1.45;">
+        <div style="font-weight: 600; color: var(--text-main); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span>💡</span> <span>Conceptualization &amp; Development</span>
+        </div>
+        <p style="margin-bottom: 12px; color: var(--text-main);">
+          Architected and developed by <a href="https://www.linkedin.com/in/beingbabu/" target="_blank" rel="noopener noreferrer" style="color: var(--accent-blue); text-decoration: underline; font-weight: 600;">Babu George</a> as an open, serendipitous road-trip audio companion.
+        </p>
+
+        <div style="font-weight: 600; color: #f85149; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span>⚖️</span> <span>Legal Disclaimer &amp; Non-Liability Clause</span>
+        </div>
+        <div style="background: rgba(248, 81, 73, 0.08); border: 1px solid rgba(248, 81, 73, 0.25); border-radius: var(--radius-sm); padding: 10px; font-size: 0.73rem; color: #c9d1d9; line-height: 1.4;">
+          <strong>"As-Is" &amp; Total Limitation of Liability:</strong> This application is provided solely for educational, cultural, and recreational exploratory purposes. Navigation paths, roadside wonder coordinates, detour estimates, and voice narrations are generated from public, crowd-sourced datasets (OpenStreetMap, Wikipedia, Wikivoyage, OSRM) and may contain inaccuracies. The creator, developers, and contributors assume NO legal liability or responsibility whatsoever for any direct, indirect, incidental, or consequential damages, traffic violations, accidents, vehicular damage, property access disputes, delays, or personal injury resulting from the use or misuse of this software. Drivers must exercise independent judgment, maintain full attention on driving conditions, obey all traffic laws, and never interact with device screens while operating a vehicle.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Main Application Script (ES Module) -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
