@@ -37,7 +37,7 @@ class WanderingLayerApp {
     this.heartbeat = new HeartbeatService();
     this.journal = new JournalService(this.storage);
     this.personas = new PersonaService('wanderer');
-    this.routeService = new RouteService(this.wiki, this.osm, this.storage);
+    this.routeService = new RouteService(this.wiki, this.osm, this.storage, this.weather);
 
     this.map = null;
     this.carMarker = null;
@@ -435,6 +435,11 @@ class WanderingLayerApp {
     });
 
     document.getElementById('route-scan-btn').addEventListener('click', () => this.handleRouteScan());
+    document.getElementById('route-departure-select')?.addEventListener('change', () => {
+      if (this.routeService.currentRoute) {
+        this.handleRouteScan();
+      }
+    });
     document.getElementById('export-gpx-btn').addEventListener('click', () => this.exportRouteGpx());
     document.getElementById('cache-route-offline-btn').addEventListener('click', () => this.handleOfflinePreCache());
 
@@ -1662,6 +1667,9 @@ class WanderingLayerApp {
       this.updateRouteSummary(route);
 
       // 3. Predictive En-Route Weather Forecast
+      const departureOffsetMins = Number(document.getElementById('route-departure-select')?.value || 0);
+      const departureDate = new Date(Date.now() + (departureOffsetMins * 60 * 1000));
+
       try {
         const weatherPreviewEl = document.getElementById('route-weather-preview');
         this.weather.getRouteWeatherForecast(route.latLngs, route.durationMinutes, this.unitSystem).then(fc => {
@@ -1669,14 +1677,14 @@ class WanderingLayerApp {
         });
       } catch (e) {}
 
-      statusEl.innerHTML = `<span>✓ Route ready &bull; Loading roadside highlights...</span>`;
+      statusEl.innerHTML = `<span>✓ Route ready &bull; Loading roadside highlights & weather forecasts...</span>`;
 
-      // 4. Stream corridor landmarks
+      // 4. Stream corridor landmarks with place-and-time weather
       const listEl = document.getElementById('corridor-list');
-      listEl.innerHTML = '<div style="color:var(--text-muted);padding:8px;font-size:0.85rem;">⏳ Streaming roadside wonders...</div>';
+      listEl.innerHTML = '<div style="color:var(--text-muted);padding:8px;font-size:0.85rem;">⏳ Streaming roadside wonders & checking en-route weather...</div>';
 
-      this.routeService.discoverCorridorWaypoints(3500).then(corridorPois => {
-        statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside wonders along your journey:</span>`;
+      this.routeService.discoverCorridorWaypoints(3500, departureDate, this.unitSystem).then(corridorPois => {
+        statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside highlights along your journey:</span>`;
         listEl.innerHTML = '';
         this.selectedWaypoints = [];
 
@@ -1690,16 +1698,28 @@ class WanderingLayerApp {
 
             const detourBadge = `+${poi.detourMinutes}m detour`;
             const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
+            const etaTime = poi.weather?.arrivalTimeFormatted ? `@ ${poi.weather.arrivalTimeFormatted}` : `+${poi.etaMinutes}m ETA`;
+
+            const weatherBadge = poi.weather ? `
+              <span class="corridor-weather-chip ${poi.weather.isAdverse ? 'adverse' : ''}" title="${poi.weather.suitabilityNote || ''}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; background: ${poi.weather.isAdverse ? 'rgba(248,81,73,0.15)' : 'rgba(88,166,255,0.12)'}; color: ${poi.weather.isAdverse ? '#f85149' : '#79c0ff'}; border: 1px solid ${poi.weather.isAdverse ? 'rgba(248,81,73,0.4)' : 'rgba(88,166,255,0.3)'};">
+                <span>${poi.weather.icon}</span>
+                <span>${poi.weather.tempDisplay}</span>
+                <span style="opacity: 0.8;">&bull; ${poi.weather.condition}</span>
+                <span style="font-weight: 600; opacity: 0.95;">(${etaTime})</span>
+              </span>
+            ` : `<span style="font-size: 0.72rem; color: var(--text-muted);">⏳ +${poi.etaMinutes}m ETA</span>`;
 
             item.innerHTML = `
               <input type="checkbox" id="check-${poi.id}" data-id="${poi.id}">
               ${poi.thumbnail ? `<img src="${poi.thumbnail}" class="corridor-thumb" alt="${poi.title}">` : '<div class="corridor-thumb" style="background:#21262d;display:flex;align-items:center;justify-content:center;font-size:20px;">🧭</div>'}
-              <div class="corridor-details">
-                <div class="corridor-title">${poi.title}</div>
-                <div class="corridor-meta">
+              <div class="corridor-details" style="display: flex; flex-direction: column; gap: 3px;">
+                <div class="corridor-title" style="font-weight: 600; font-size: 0.86rem; color: var(--text-main);">${poi.title}</div>
+                <div class="corridor-meta" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.72rem;">
                   <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
                   <span>&bull;</span>
                   <span>${distFromHwy}</span>
+                  <span>&bull;</span>
+                  ${weatherBadge}
                 </div>
               </div>
             `;

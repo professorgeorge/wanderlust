@@ -87,7 +87,7 @@ export class WikiService {
 
       if (!data?.query?.geosearch) return [];
 
-      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(item.pageid));
+      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(item.pageid)).slice(0, limit || 3);
       
       const summaryPromises = candidateItems.map(async (item) => {
         try {

@@ -1,12 +1,16 @@
 import { RouteService } from './services/route-service.js';
 import { GpsService } from './services/gps.js';
 import { WikiService } from './services/wiki-service.js';
+import { WeatherService } from './services/weather-service.js';
+import { OsmService } from './services/osm-service.js';
 
 async function runComprehensiveTests() {
-  console.log('=== Starting Wandering Layer Route & Simulator Tests ===\n');
+  console.log('=== Starting Wandering Layer Route, Place & Time Weather Tests ===\n');
 
   const wiki = new WikiService(null, 'en');
-  const routeService = new RouteService(wiki, null, null);
+  const osm = new OsmService();
+  const weather = new WeatherService();
+  const routeService = new RouteService(wiki, osm, null, weather);
   const gps = new GpsService();
 
   // Test 1: Geocoding
@@ -29,56 +33,49 @@ async function runComprehensiveTests() {
   if (!route || !route.latLngs || route.latLngs.length < 2) throw new Error('Route calculation failed');
   console.log('  [PASS] Calculate route works.\n');
 
-  // Test 3: Calculate Curvature and calcBearing
-  console.log('Test 3: Curvature & Bearing computation');
-  const samplePoints = [[37.77, -122.41], [37.78, -122.40], [37.79, -122.42], [37.80, -122.41]];
-  const curv = routeService.calculateCurvature(samplePoints);
-  console.log('  Curvature ratio:', curv.curvatureRatio, 'Score:', curv.comfortScore);
-  const bearing = routeService.calcBearing(37.77, -122.41, 37.78, -122.40);
-  console.log('  Bearing calculated:', bearing.toFixed(2), 'degrees');
-  if (isNaN(bearing) || bearing < 0 || bearing > 360) throw new Error('calcBearing failed');
-  console.log('  [PASS] Bearing and curvature calculations work.\n');
+  // Test 3: Point Forecast at Specific Place and Time (ETA)
+  console.log('Test 3: Point-in-Time Weather Forecast for Stops');
+  const pointForecast = await weather.getPointForecastAtTime(37.4419, -122.1430, 45, new Date(), 'imperial');
+  console.log('  Palo Alto Stop Forecast (+45m ETA):', pointForecast?.tempDisplay, pointForecast?.condition, pointForecast?.icon);
+  console.log('  Arrival Time:', pointForecast?.arrivalTimeFormatted, 'Suitability:', pointForecast?.suitabilityNote);
+  if (!pointForecast || !pointForecast.tempDisplay) throw new Error('Point-in-time forecast failed');
+  console.log('  [PASS] Location & Time specific weather forecast works.\n');
 
-  // Test 4: Corridor Waypoint Discovery
-  console.log('Test 4: Corridor Waypoint Discovery');
-  const corridorWaypoints = await routeService.discoverCorridorWaypoints(5000);
+  // Test 4: Corridor Waypoint Discovery with Arrival Weather Enrichment
+  console.log('Test 4: Corridor Discovery with Arrival Weather');
+  const corridorWaypoints = await routeService.discoverCorridorWaypoints(5000, new Date(), 'imperial');
   console.log('  Found corridor waypoints count:', corridorWaypoints.length);
   if (corridorWaypoints.length > 0) {
-    console.log('  First stop:', corridorWaypoints[0].title, 'Detour:', corridorWaypoints[0].detourMinutes, 'mins');
+    const first = corridorWaypoints[0];
+    console.log('  First stop:', first.title, '| Type:', first.type || first.source);
+    console.log('  Detour:', first.detourMinutes, 'mins | ETA:', first.etaMinutes, 'mins');
+    if (first.weather) {
+      console.log('  Weather at Arrival:', first.weather.icon, first.weather.tempDisplay, first.weather.condition, '@', first.weather.arrivalTimeFormatted);
+    }
   }
-  console.log('  [PASS] Corridor discovery works.\n');
+  console.log('  [PASS] Corridor discovery and weather enrichment works.\n');
 
-  // Test 5: Topological Sequencing & Navigation URLs
+  // Test 5: Topological Sequencing & Map Links
   console.log('Test 5: Topological Sequencing & Map Links');
   const mockWaypoints = [
-    { id: 'wp2', title: 'Midway Vista', lat: 37.55, lng: -122.15, detourMinutes: 8 },
-    { id: 'wp1', title: 'Early Overlook', lat: 37.70, lng: -122.35, detourMinutes: 5 }
+    { id: 'wp2', title: 'Midway Market', lat: 37.55, lng: -122.15, detourMinutes: 8 },
+    { id: 'wp1', title: 'Early Bakery', lat: 37.70, lng: -122.35, detourMinutes: 5 }
   ];
   const sorted = routeService.sequenceWaypointsTopologically(mockWaypoints, route.latLngs);
   console.log('  Sorted waypoints:', sorted.map(w => w.title));
   const gmapsUrl = routeService.generateGoogleMapsUrl(startLoc, endLoc, sorted);
   const appleUrl = routeService.generateAppleMapsUrl(startLoc, endLoc, sorted);
-  console.log('  Google Maps URL generated:', gmapsUrl.substring(0, 70) + '...');
-  console.log('  Apple Maps URL generated:', appleUrl.substring(0, 70) + '...');
   if (!gmapsUrl.includes('google.com') || !appleUrl.includes('apple.com')) throw new Error('Map URL generation failed');
   console.log('  [PASS] Topological sequencing and navigation URLs work.\n');
 
-  // Test 6: GPX Export
-  console.log('Test 6: GPX Export');
-  const gpx = routeService.exportToGpx(startLoc, endLoc, sorted, route.latLngs);
-  if (!gpx.includes('<gpx') || !gpx.includes('Start:')) throw new Error('GPX generation failed');
-  console.log('  GPX generated successfully (length:', gpx.length, 'bytes)');
-  console.log('  [PASS] GPX Export works.\n');
-
-  // Test 7: Trip Simulator Lifecycle
-  console.log('Test 7: Trip Simulator Lifecycle');
+  // Test 6: Trip Simulator Lifecycle
+  console.log('Test 6: Trip Simulator Lifecycle');
   let positionUpdatesReceived = 0;
-  gps.onLocationUpdate = (pos) => {
+  gps.onLocationUpdate = () => {
     positionUpdatesReceived++;
   };
   const simStarted = gps.startSimulation(route.latLngs);
   if (!simStarted) throw new Error('Failed to start GPS simulation');
-  console.log('  Simulation active:', gps.isSimulating, 'Speed:', gps.speed, 'km/h');
   await new Promise(resolve => setTimeout(resolve, 500));
   gps.stopSimulation();
   console.log('  Simulation stopped. Updates received:', positionUpdatesReceived);

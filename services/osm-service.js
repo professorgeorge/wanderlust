@@ -21,15 +21,21 @@ export class OsmService {
    */
   async findNearby(lat, lng, radiusMeters = 3000) {
     const now = Date.now();
-    if (now - this.lastQueryTime < 6000) {
-      return [];
+    if (now - this.lastQueryTime < 1500) {
+      // Light throttle between rapid consecutive anchor calls
+      await new Promise(r => setTimeout(r, 400));
     }
-    this.lastQueryTime = now;
+    this.lastQueryTime = Date.now();
 
     const radius = Math.min(Math.max(radiusMeters, 500), 5000);
     const query = `
       [out:json][timeout:8];
       (
+        node["amenity"="marketplace"](around:${radius},${lat},${lng});
+        node["shop"="farm"](around:${radius},${lat},${lng});
+        node["shop"="bakery"](around:${radius},${lat},${lng});
+        node["amenity"="cafe"](around:${radius},${lat},${lng});
+        node["tourism"="picnic_site"](around:${radius},${lat},${lng});
         node["tourism"="viewpoint"](around:${radius},${lat},${lng});
         node["natural"="waterfall"](around:${radius},${lat},${lng});
         node["natural"="peak"](around:${radius},${lat},${lng});
@@ -55,7 +61,11 @@ export class OsmService {
 
         const res = await fetch(mirrorUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': 'TheWanderingLayer/2.0 (OpenStreetMap Roadside Explorer)'
+          },
           body: 'data=' + encodeURIComponent(query),
           signal: controller.signal
         });
@@ -76,13 +86,18 @@ export class OsmService {
           if (!el.tags) continue;
           if (this.narratedNodes.has(el.id)) continue;
 
-          const type = el.tags.tourism || el.tags.natural || el.tags.historic || 'scenic';
+          const type = el.tags.amenity || el.tags.shop || el.tags.tourism || el.tags.natural || el.tags.historic || 'scenic';
           const name = el.tags.name || `Scenic ${type.replace(/_/g, ' ')}`;
           const dist = this.calculateDistance(lat, lng, el.lat, el.lon);
 
           let desc = el.tags.description || '';
           if (!desc) {
-            if (type === 'viewpoint') desc = 'A scenic lookout point with panoramic views of the surrounding landscape.';
+            if (type === 'marketplace') desc = 'A vibrant local marketplace for regional produce, artisanal crafts, and fresh goods.';
+            else if (type === 'farm') desc = 'A local roadside farm stand offering fresh seasonal harvest and farm produce.';
+            else if (type === 'bakery') desc = 'An artisanal roadside bakery with fresh breads, pastries, and treats.';
+            else if (type === 'cafe') desc = 'A cozy roadside cafe and refreshments stop.';
+            else if (type === 'picnic_site') desc = 'A scenic outdoor picnic area to pause, refresh, and take in the view.';
+            else if (type === 'viewpoint') desc = 'A scenic lookout point with panoramic views of the surrounding landscape.';
             else if (type === 'waterfall') desc = 'A natural waterfall or cascading mountain stream.';
             else if (type === 'peak') desc = `A mountain summit${el.tags.ele ? ` (elevation ${el.tags.ele}m)` : ''}.`;
             else if (type === 'cave_entrance') desc = 'A natural cave entrance and geological feature.';

@@ -204,6 +204,80 @@ export class WeatherService {
   }
 
   /**
+   * Predictive weather at a specific coordinate and specific ETA/arrival time
+   * Crucial for open-air roadside markets, farm stalls, and scenic viewpoints
+   */
+  async getPointForecastAtTime(lat, lng, etaMinutes = 0, departureDate = new Date(), unitSystem = 'imperial') {
+    if (!lat || !lng || isNaN(lat) || isNaN(lng)) return null;
+
+    const tempUnit = unitSystem === 'imperial' ? 'fahrenheit' : 'celsius';
+    const windUnit = unitSystem === 'imperial' ? 'mph' : 'kmh';
+    const precipUnit = unitSystem === 'imperial' ? 'inch' : 'mm';
+    const tempSymbol = unitSystem === 'imperial' ? '°F' : '°C';
+
+    const arrivalDate = new Date(departureDate.getTime() + (etaMinutes * 60 * 1000));
+    const arrivalHour = arrivalDate.getHours();
+    const arrivalTimeFormatted = arrivalDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&current=temperature_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m,visibility&hourly=temperature_2m,precipitation_probability,weather_code,visibility&temperature_unit=${tempUnit}&wind_speed_unit=${windUnit}&precipitation_unit=${precipUnit}&forecast_hours=24`;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) return null;
+      const data = await res.json();
+
+      let temp = Math.round(data.current?.temperature_2m || 70);
+      let code = data.current?.weather_code || 0;
+      let precipProb = 0;
+      let vis = data.current?.visibility || 10000;
+
+      if (data.hourly && data.hourly.temperature_2m && data.hourly.temperature_2m[arrivalHour] !== undefined) {
+        temp = Math.round(data.hourly.temperature_2m[arrivalHour]);
+        code = data.hourly.weather_code ? data.hourly.weather_code[arrivalHour] : code;
+        precipProb = data.hourly.precipitation_probability ? data.hourly.precipitation_probability[arrivalHour] : 0;
+        vis = data.hourly.visibility ? data.hourly.visibility[arrivalHour] : vis;
+      }
+
+      const isDayTime = (arrivalHour >= 6 && arrivalHour <= 20) ? 1 : 0;
+      const wmo = this.getWmoDetails(code, isDayTime);
+
+      let suitabilityNote = 'Pleasant conditions for visiting';
+      let isAdverse = false;
+      if (wmo.severity === 'storm' || precipProb > 60) {
+        suitabilityNote = '🌧️ Rain or storm likely at arrival time';
+        isAdverse = true;
+      } else if (vis < 1500) {
+        suitabilityNote = '🌫️ Low visibility / mountain fog';
+      } else if (temp >= (unitSystem === 'imperial' ? 88 : 31)) {
+        suitabilityNote = '☀️ Warm & sunny weather';
+      } else if (temp <= (unitSystem === 'imperial' ? 38 : 3)) {
+        suitabilityNote = '❄️ Chilly weather, dress warmly';
+      }
+
+      return {
+        lat,
+        lng,
+        temp,
+        tempDisplay: `${temp}${tempSymbol}`,
+        condition: wmo.label,
+        icon: wmo.icon,
+        precipProb,
+        arrivalTimeFormatted,
+        etaMinutes,
+        suitabilityNote,
+        isAdverse
+      };
+    } catch (e) {
+      console.warn('Point weather error:', e);
+      return null;
+    }
+  }
+
+  /**
    * Evaluate active driving hazards
    */
   evaluateHazards(curr, wmo, unitSystem) {

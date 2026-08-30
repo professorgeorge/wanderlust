@@ -302,6 +302,22 @@
         </div>
       </div>
 
+      <!-- Departure Time & En-Route Forecast Selector -->
+      <div style="display: flex; align-items: center; justify-content: space-between; margin: 4px 0 10px 0; padding: 6px 10px; background: rgba(88, 166, 255, 0.06); border: 1px solid rgba(88, 166, 255, 0.2); border-radius: var(--radius-sm); font-size: 0.8rem;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="color: var(--accent-cyan); font-weight: 600;">🕒 Planned Departure:</span>
+          <select id="route-departure-select" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text-main); padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; outline: none;">
+            <option value="0">Depart Now</option>
+            <option value="60">In 1 Hour</option>
+            <option value="120">In 2 Hours</option>
+            <option value="180">In 3 Hours</option>
+            <option value="240">In 4 Hours</option>
+            <option value="480">In 8 Hours</option>
+          </select>
+        </div>
+        <span style="color: var(--text-muted); font-size: 0.72rem;">Forecast evaluated at arrival ETA</span>
+      </div>
+
       <!-- Loading / Status indicator -->
       <div id="route-status" style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
         <span>Type an origin and destination (or tap <strong>"📍 Here"</strong>), then scan for roadside wonders along your route.</span>

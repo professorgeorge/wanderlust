@@ -6,10 +6,11 @@
  * 100% Free, zero API keys.
  */
 export class RouteService {
-  constructor(wikiService, osmService = null, storageService = null) {
+  constructor(wikiService, osmService = null, storageService = null, weatherService = null) {
     this.wiki = wikiService;
     this.osm = osmService;
     this.storage = storageService;
+    this.weather = weatherService;
     this.currentRoute = null;
     this.selectedWaypoints = [];
   }
@@ -382,15 +383,16 @@ export class RouteService {
   }
 
   /**
-   * Fast corridor discovery along polyline (sub-second execution using Wikipedia GeoSearch & saved pins)
+   * Fast corridor discovery along polyline with predictive arrival-time weather
+   * Queries Wikipedia, OSM (markets, viewpoints, farm stands), and computes point-in-time forecasts
    */
-  async discoverCorridorWaypoints(corridorRadiusMeters = 3500) {
+  async discoverCorridorWaypoints(corridorRadiusMeters = 3500, departureDate = new Date(), unitSystem = 'imperial') {
     if (!this.currentRoute || !this.currentRoute.latLngs) return [];
 
     const latLngs = this.currentRoute.latLngs;
     if (latLngs.length < 2) return [];
 
-    // Distribute 4 scan anchors evenly across the route
+    // Distribute scan anchors evenly across the route
     const sampleCount = Math.min(4, Math.max(2, Math.round(latLngs.length / 100)));
     const sampledPoints = [];
     for (let i = 0; i < sampleCount; i++) {
@@ -400,15 +402,21 @@ export class RouteService {
 
     const allDiscovered = new Map();
 
-    const fetchPromises = sampledPoints.map(pt =>
-      this.wiki ? this.wiki.findNearby(pt[0], pt[1], corridorRadiusMeters, 3) : Promise.resolve([])
-    );
+    const fetchPromises = sampledPoints.map(async (pt) => {
+      const [wikiRes, osmRes] = await Promise.allSettled([
+        this.wiki ? this.wiki.findNearby(pt[0], pt[1], corridorRadiusMeters, 3) : Promise.resolve([]),
+        this.osm ? this.osm.findNearby(pt[0], pt[1], corridorRadiusMeters) : Promise.resolve([])
+      ]);
+      const wikiPois = wikiRes.status === 'fulfilled' ? wikiRes.value : [];
+      const osmPois = osmRes.status === 'fulfilled' ? osmRes.value : [];
+      return [...wikiPois, ...osmPois];
+    });
 
     const batches = await Promise.allSettled(fetchPromises);
     batches.forEach(result => {
-      const wikiPois = result.status === 'fulfilled' ? result.value : [];
+      const pois = result.status === 'fulfilled' ? result.value : [];
 
-      wikiPois.forEach(poi => {
+      pois.forEach(poi => {
         if (!allDiscovered.has(poi.id)) {
           const { minDistance, projectionDistance } = this.calculateRouteProjection(poi.lat, poi.lng, latLngs);
 
@@ -416,9 +424,14 @@ export class RouteService {
           const detourDriveMinutes = Math.round((roundTripDetourKm / 35) * 60);
           const dwellMinutes = minDistance > 2000 ? 10 : 5;
 
+          const routeDist = this.currentRoute.distanceMeters || 1;
+          const fraction = Math.min(1, Math.max(0, projectionDistance / routeDist));
+          const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
+
           poi.distanceFromRouteMeters = Math.round(minDistance);
           poi.projectionDistanceMeters = projectionDistance;
           poi.detourMinutes = detourDriveMinutes + dwellMinutes;
+          poi.etaMinutes = etaMinutes;
 
           allDiscovered.set(poi.id, poi);
         }
@@ -427,6 +440,25 @@ export class RouteService {
 
     const sortedList = Array.from(allDiscovered.values());
     sortedList.sort((a, b) => a.projectionDistanceMeters - b.projectionDistanceMeters);
+
+    // Weather Enrichment at Specific Place & Specific Arrival Time (ETA)
+    if (this.weather && sortedList.length > 0) {
+      const weatherPromises = sortedList.map(async (poi) => {
+        try {
+          const w = await this.weather.getPointForecastAtTime(
+            poi.lat,
+            poi.lng,
+            poi.etaMinutes,
+            departureDate,
+            unitSystem
+          );
+          poi.weather = w;
+        } catch (e) {
+          console.warn('Corridor stop weather enrichment note:', e);
+        }
+      });
+      await Promise.allSettled(weatherPromises);
+    }
 
     return sortedList;
   }
