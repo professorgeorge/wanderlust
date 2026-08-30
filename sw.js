@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wandering-layer-v14';
+const CACHE_NAME = 'wandering-layer-v15';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
