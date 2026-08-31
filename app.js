@@ -204,9 +204,9 @@ class WanderingLayerApp {
       if (locationResolved && source === 'ip') return;
       locationResolved = true;
       this.saveLastKnownLocation(lat, lng);
-      this.carMarker.setLatLng([lat, lng]);
-      this.radiusCircle.setLatLng([lat, lng]);
-      this.map.setView([lat, lng], zoom);
+      if (this.carMarker) this.carMarker.setLatLng([lat, lng]);
+      if (this.radiusCircle) this.radiusCircle.setLatLng([lat, lng]);
+      if (this.map) this.map.setView([lat, lng], zoom);
       this.gps.updatePosition(lat, lng, null, 0, false);
       this.updateContextHUD(lat, lng);
       this.scanLandscape(lat, lng);
@@ -907,13 +907,16 @@ class WanderingLayerApp {
 
   initVoiceState() {
     const select = document.getElementById('voice-select');
+    if (!select) return;
     setTimeout(() => {
-      const voices = window.speechSynthesis.getVoices();
+      if (typeof window === 'undefined' || !window.speechSynthesis) return;
+      const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+      if (!voices || voices.length === 0) return;
       select.innerHTML = '';
       
       const langPrefix = this.knowledgeLang || 'en';
-      const matchingVoices = voices.filter(v => v.lang.startsWith(langPrefix));
-      const otherVoices = voices.filter(v => !v.lang.startsWith(langPrefix));
+      const matchingVoices = voices.filter(v => v.lang && v.lang.startsWith(langPrefix));
+      const otherVoices = voices.filter(v => v.lang && !v.lang.startsWith(langPrefix));
 
       [...matchingVoices, ...otherVoices].forEach((v) => {
         const opt = document.createElement('option');

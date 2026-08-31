@@ -13,8 +13,8 @@ export class StorageService {
   }
 
   async initDB() {
-    if (!('indexedDB' in window)) {
-      console.warn('IndexedDB not supported; falling back to memory/localStorage.');
+    if (typeof window === 'undefined' || !('indexedDB' in window)) {
+      console.warn('IndexedDB not supported or running in non-window environment; falling back to memory/localStorage.');
       return null;
     }
 
