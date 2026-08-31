@@ -5,6 +5,13 @@ A zero-cost, open-source audio-first companion Progressive Web App (PWA) that ru
 
 ---
 
+### 🚀 Live Web App Deployments
+* **Primary Live App (Vercel):** [https://wanderlust-eight-psi.vercel.app](https://wanderlust-eight-psi.vercel.app)
+* **GitHub Pages Mirror:** [https://professorgeorge.github.io/wanderlust/](https://professorgeorge.github.io/wanderlust/)
+* **Creator / Architect:** [Babu George on LinkedIn](https://www.linkedin.com/in/beingbabu/)
+
+---
+
 ### Key Philosophy
 > *"Directions are wonderfully efficient. When we are trying to reach a destination, we want to know exactly which road to take... But something profound is lost when the glowing blue line of the route becomes the only thing we see. A map tells me there is a lake beyond the road I am taking. It tells me there is a village on the other side of the hill... Education must teach us how to read the map. To understand, rather than merely arrive."*
 
@@ -39,7 +46,6 @@ A zero-cost, open-source audio-first companion Progressive Web App (PWA) that ru
 Launch a local static server:
 
 ```bash
-cd C:\Users\babug\.gemini\antigravity\scratch\wandering-layer
 python -m http.server 8080
 ```
 
@@ -49,11 +55,10 @@ Then open `http://localhost:8080` in your web browser.
 
 ### How to Host for Free (For Use in Your Car on iPhone / Android)
 
-1. Create a free repository on [GitHub](https://github.com).
-2. Push or upload the files in this directory (`index.html`, `styles.css`, `app.js`, `sw.js`, `manifest.json`, `services/`).
-3. Go to **Settings > Pages > Branch: main / root > Save**.
-4. GitHub provides a free, public, secure HTTPS URL (e.g. `https://yourname.github.io/wandering-layer/`).
-5. Open this URL on your phone's Safari or Chrome, tap **"Add to Home Screen"**, connect to Bluetooth in your car, tap **"Start Journey"**, and switch back to Google Maps!
+1. Fork or push to your repository on GitHub.
+2. Go to **Settings > Pages > Branch: main / root > Save**.
+3. GitHub provides a free, public, secure HTTPS URL: [https://professorgeorge.github.io/wanderlust/](https://professorgeorge.github.io/wanderlust/)
+4. Open this URL on your phone's Safari or Chrome, tap **"Add to Home Screen"**, connect to Bluetooth in your car, tap **"Start Journey"**, and switch back to Google Maps!
 
 ---
 
