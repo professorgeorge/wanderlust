@@ -148,6 +148,48 @@ export class RouteService {
   }
 
   /**
+   * Reverse geocode coordinates to human-readable city/region name
+   */
+  async reverseGeocode(lat, lng) {
+    if (!lat || !lng || isNaN(lat) || isNaN(lng)) return 'Current Location';
+
+    // 1. BigDataCloud high-speed client-side reverse geocoding
+    try {
+      const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const city = data.city || data.locality || data.principalSubdivision || data.countryName;
+        if (city) {
+          const state = data.principalSubdivisionCode ? data.principalSubdivisionCode.split('-').pop() : (data.principalSubdivision || '');
+          return state && state !== city ? `${city}, ${state}` : city;
+        }
+      }
+    } catch (e) {
+      console.warn('BigDataCloud reverse geocode error:', e);
+    }
+
+    // 2. OpenStreetMap Nominatim fallback
+    try {
+      const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`;
+      const res = await fetch(nomUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.address) {
+          const city = data.address.city || data.address.town || data.address.village || data.address.hamlet || data.address.county;
+          const state = data.address.state || data.address.country;
+          if (city) return state ? `${city}, ${state}` : city;
+        }
+        if (data && data.display_name) return data.display_name.split(',')[0];
+      }
+    } catch (e) {
+      console.warn('Nominatim reverse geocode error:', e);
+    }
+
+    return `Location (${Number(lat).toFixed(3)}, ${Number(lng).toFixed(3)})`;
+  }
+
+  /**
    * Calculate single reliable driving route between two points
    */
   async calculateRoute(start, end) {
@@ -426,28 +468,28 @@ export class RouteService {
 
   /**
    * Fast corridor discovery along polyline with predictive arrival-time weather
-   * Queries Wikipedia, OSM (markets, viewpoints, farm stands), and computes point-in-time forecasts
+   * Queries Wikipedia, Wikivoyage, OSM (markets, viewpoints, farm stands, castles, ruins),
+   * and samples continuously every 15-25 km across the entire driving journey.
    */
-  async discoverCorridorWaypoints(corridorRadiusMeters = 3500, departureDate = new Date(), unitSystem = 'imperial') {
+  async discoverCorridorWaypoints(corridorRadiusMeters = 5000, departureDate = new Date(), unitSystem = 'imperial') {
     if (!this.currentRoute || !this.currentRoute.latLngs) return [];
 
     const latLngs = this.currentRoute.latLngs;
     if (latLngs.length < 2) return [];
 
-    // Distribute scan anchors evenly across the route
-    const sampleCount = Math.min(4, Math.max(2, Math.round(latLngs.length / 100)));
-    const sampledPoints = [];
-    for (let i = 0; i < sampleCount; i++) {
-      const idx = Math.floor((i / (sampleCount - 1 || 1)) * (latLngs.length - 1));
-      sampledPoints.push(latLngs[idx]);
-    }
+    // Calculate total polyline distance
+    const totalDistMeters = this.currentRoute.distanceMeters || this.calcTotalPolylineDistance(latLngs);
+    
+    // Dynamically sample scan anchors every 18-25 km along the route
+    const stepMeters = Math.max(12000, Math.min(28000, totalDistMeters / 18));
+    const sampledPoints = this.samplePolylineByDistance(latLngs, stepMeters);
 
     const allDiscovered = new Map();
 
     const fetchPromises = sampledPoints.map(async (pt) => {
       const [wikiRes, osmRes] = await Promise.allSettled([
-        this.wiki ? this.wiki.findNearby(pt[0], pt[1], corridorRadiusMeters, 3) : Promise.resolve([]),
-        this.osm ? this.osm.findNearby(pt[0], pt[1], corridorRadiusMeters) : Promise.resolve([])
+        this.wiki ? this.wiki.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000), 8) : Promise.resolve([]),
+        this.osm ? this.osm.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000)) : Promise.resolve([])
       ]);
       const wikiPois = wikiRes.status === 'fulfilled' ? wikiRes.value : [];
       const osmPois = osmRes.status === 'fulfilled' ? osmRes.value : [];
@@ -462,11 +504,14 @@ export class RouteService {
         if (!allDiscovered.has(poi.id)) {
           const { minDistance, projectionDistance } = this.calculateRouteProjection(poi.lat, poi.lng, latLngs);
 
+          // Only keep POIs within 6.5 km corridor of the actual driving route
+          if (minDistance > 6500) return;
+
           const roundTripDetourKm = (minDistance * 1.35 * 2) / 1000;
           const detourDriveMinutes = Math.round((roundTripDetourKm / 35) * 60);
           const dwellMinutes = minDistance > 2000 ? 10 : 5;
 
-          const routeDist = this.currentRoute.distanceMeters || 1;
+          const routeDist = this.currentRoute.distanceMeters || totalDistMeters || 1;
           const fraction = Math.min(1, Math.max(0, projectionDistance / routeDist));
           const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
 
@@ -485,12 +530,71 @@ export class RouteService {
       });
     });
 
-    const sortedList = Array.from(allDiscovered.values());
+    // Also include user wonder pins that lie along this corridor
+    if (this.storage) {
+      try {
+        const userPins = await this.storage.getAllWonderPins();
+        userPins.forEach(pin => {
+          const { minDistance, projectionDistance } = this.calculateRouteProjection(pin.lat, pin.lng, latLngs);
+          if (minDistance <= 6500) {
+            const fraction = Math.min(1, Math.max(0, projectionDistance / (totalDistMeters || 1)));
+            const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
+            const catInfo = this.classifyCategory(pin);
+
+            allDiscovered.set(pin.id, {
+              id: pin.id,
+              source: 'wonder_pin',
+              title: pin.title,
+              extract: pin.note,
+              shortDescription: 'Your Wonder Pin',
+              lat: pin.lat,
+              lng: pin.lng,
+              categoryKey: catInfo.key,
+              categoryLabel: catInfo.label,
+              categoryIcon: '✨',
+              distanceFromRouteMeters: Math.round(minDistance),
+              projectionDistanceMeters: projectionDistance,
+              detourMinutes: Math.round(((minDistance * 2.7) / 35000) * 60) + 5,
+              etaMinutes: etaMinutes
+            });
+          }
+        });
+      } catch (e) {}
+    }
+
+    let sortedList = Array.from(allDiscovered.values());
     sortedList.sort((a, b) => a.projectionDistanceMeters - b.projectionDistanceMeters);
 
+    // Balanced Distribution:
+    // Prevent start/end cities (< 5% of route) from swamping the list.
+    const startZoneMeters = Math.min(6000, totalDistMeters * 0.05);
+    const endZoneMeters = totalDistMeters - Math.min(6000, totalDistMeters * 0.05);
+
+    let startCount = 0;
+    let endCount = 0;
+    const balancedList = [];
+
+    for (const poi of sortedList) {
+      const proj = poi.projectionDistanceMeters;
+      if (proj <= startZoneMeters) {
+        if (startCount < 3) {
+          balancedList.push(poi);
+          startCount++;
+        }
+      } else if (proj >= endZoneMeters) {
+        if (endCount < 3) {
+          balancedList.push(poi);
+          endCount++;
+        }
+      } else {
+        // En-route roadside wonder on the highway: ALWAYS include
+        balancedList.push(poi);
+      }
+    }
+
     // Weather Enrichment at Specific Place & Specific Arrival Time (ETA)
-    if (this.weather && sortedList.length > 0) {
-      const weatherPromises = sortedList.map(async (poi) => {
+    if (this.weather && balancedList.length > 0) {
+      const weatherPromises = balancedList.slice(0, 40).map(async (poi) => {
         try {
           const w = await this.weather.getPointForecastAtTime(
             poi.lat,
@@ -507,7 +611,42 @@ export class RouteService {
       await Promise.allSettled(weatherPromises);
     }
 
-    return sortedList;
+    return balancedList;
+  }
+
+  calcTotalPolylineDistance(latLngs) {
+    let total = 0;
+    for (let i = 0; i < latLngs.length - 1; i++) {
+      total += this.calcDist(latLngs[i][0], latLngs[i][1], latLngs[i + 1][0], latLngs[i + 1][1]);
+    }
+    return total;
+  }
+
+  samplePolylineByDistance(latLngs, stepMeters = 20000) {
+    if (!latLngs || latLngs.length === 0) return [];
+    if (latLngs.length === 1) return [latLngs[0]];
+
+    const samples = [latLngs[0]];
+    let accumulated = 0;
+
+    for (let i = 0; i < latLngs.length - 1; i++) {
+      const p1 = latLngs[i];
+      const p2 = latLngs[i + 1];
+      const segDist = this.calcDist(p1[0], p1[1], p2[0], p2[1]);
+      accumulated += segDist;
+
+      if (accumulated >= stepMeters) {
+        samples.push(p2);
+        accumulated = 0;
+      }
+    }
+
+    const lastPt = latLngs[latLngs.length - 1];
+    if (samples[samples.length - 1] !== lastPt) {
+      samples.push(lastPt);
+    }
+
+    return samples;
   }
 
   /**

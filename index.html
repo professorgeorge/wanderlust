@@ -11,7 +11,67 @@
   <!-- Leaflet Map CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <!-- App Styles -->
-  <link rel="stylesheet" href="styles.css?v=21">
+  <link rel="stylesheet" href="styles.css?v=24">
+
+  <!-- Capture-Phase Click Guarantee Script -->
+  <script>
+    // Runs in capture phase (before any other script or element can intercept clicks)
+    window.addEventListener('click', function(e) {
+      // 1. Plan Route Buttons
+      const planBtn = e.target.closest('#route-btn, #sidebar-plan-route-btn, #feed-plan-route-btn, .btn-plan-route, .btn-plan-sidebar');
+      if (planBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = document.getElementById('route-modal');
+        if (m) m.classList.add('active');
+        return;
+      }
+
+      // 2. Scrapbook Button
+      const scrapbookBtn = e.target.closest('#scrapbook-btn');
+      if (scrapbookBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.app && window.app.openScrapbook) {
+          window.app.openScrapbook();
+        } else {
+          const m = document.getElementById('scrapbook-modal');
+          if (m) m.classList.add('active');
+        }
+        return;
+      }
+
+      // 3. Settings Button
+      const settingsBtn = e.target.closest('#settings-btn');
+      if (settingsBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = document.getElementById('settings-modal');
+        if (m) m.classList.add('active');
+        return;
+      }
+
+      // 4. Wonder Pin Buttons
+      const dropPinBtn = e.target.closest('#drop-pin-btn, #oled-pin-btn');
+      if (dropPinBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = document.getElementById('pin-modal');
+        if (m) m.classList.add('active');
+        return;
+      }
+
+      // 5. Close Modal Buttons
+      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-pin-btn, #cancel-pin-btn');
+      if (closeBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = closeBtn.closest('.modal');
+        if (m) m.classList.remove('active');
+        return;
+      }
+    }, true);
+  </script>
 </head>
 <body>
 
@@ -669,6 +729,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   
   <!-- Main Application Script (ES Module) -->
-  <script type="module" src="app.js?v=21"></script>
+  <script type="module" src="app.js?v=24"></script>
 </body>
 </html>
