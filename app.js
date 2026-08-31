@@ -557,6 +557,22 @@ class WanderingLayerApp {
       }
     });
 
+    document.getElementById('launch-gmaps-link')?.addEventListener('click', (e) => {
+      const href = e.currentTarget.getAttribute('href');
+      if (!href || href === '#' || href === '') {
+        e.preventDefault();
+        alert('Please map a route with Origin and Destination first to generate your Google Maps directions.');
+      }
+    });
+
+    document.getElementById('launch-apple-link')?.addEventListener('click', (e) => {
+      const href = e.currentTarget.getAttribute('href');
+      if (!href || href === '#' || href === '') {
+        e.preventDefault();
+        alert('Please map a route with Origin and Destination first to generate your Apple Maps directions.');
+      }
+    });
+
     document.getElementById('export-gpx-btn').addEventListener('click', () => this.exportRouteGpx());
     document.getElementById('cache-route-offline-btn').addEventListener('click', () => this.handleOfflinePreCache());
 

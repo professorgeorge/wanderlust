@@ -1881,4 +1881,38 @@ main {
   color: #79c0ff;
 }
 
+/* Link and Button Clickability Guarantees */
+a, button, input[type="button"], input[type="submit"] {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-content {
+  pointer-events: auto !important;
+  user-select: text;
+}
+
+.leaflet-popup-content a,
+.leaflet-popup-content button {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  display: inline-block;
+  position: relative;
+  z-index: 1000;
+}
+
+.btn-gmaps-launch,
+.btn-gpx-export,
+.daily-leg-btn,
+.action-btn,
+.btn-detour,
+.btn-narrate,
+.oled-action-btn {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  position: relative;
+  z-index: 5;
+}
+
 
