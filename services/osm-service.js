@@ -84,7 +84,7 @@ export class OsmService {
         const results = [];
         for (const el of data.elements) {
           if (!el.tags) continue;
-          if (this.narratedNodes.has(el.id)) continue;
+          if (this.isNarrated(el.id) || this.isNarrated(`osm-${el.id}`)) continue;
 
           const type = el.tags.amenity || el.tags.shop || el.tags.tourism || el.tags.natural || el.tags.historic || 'scenic';
           const name = el.tags.name || `Scenic ${type.replace(/_/g, ' ')}`;
@@ -144,9 +144,27 @@ export class OsmService {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
+  isNarrated(id) {
+    if (!id) return false;
+    const strId = String(id);
+    if (this.narratedNodes.has(strId)) return true;
+    const rawId = strId.replace(/^osm-/, '');
+    return this.narratedNodes.has(rawId) ||
+           this.narratedNodes.has(Number(rawId)) ||
+           this.narratedNodes.has(`osm-${rawId}`);
+  }
+
   markAsNarrated(id) {
-    const rawId = String(id).replace('osm-', '');
-    this.narratedNodes.add(Number(rawId) || rawId);
+    if (!id) return;
+    const strId = String(id);
+    this.narratedNodes.add(strId);
+    const rawId = strId.replace(/^osm-/, '');
+    if (rawId) {
+      this.narratedNodes.add(rawId);
+      const num = Number(rawId);
+      if (!isNaN(num)) this.narratedNodes.add(num);
+      this.narratedNodes.add(`osm-${rawId}`);
+    }
   }
 
   resetNarrated() {

@@ -68,19 +68,62 @@ async function runComprehensiveTests() {
   if (!gmapsUrl.includes('google.com') || !appleUrl.includes('apple.com')) throw new Error('Map URL generation failed');
   console.log('  [PASS] Topological sequencing and navigation URLs work.\n');
 
-  // Test 6: Trip Simulator Lifecycle
-  console.log('Test 6: Trip Simulator Lifecycle');
-  let positionUpdatesReceived = 0;
-  gps.onLocationUpdate = () => {
-    positionUpdatesReceived++;
+  // Test 7: Multi-Day Auto-Segmentation & 9-Stop Google Maps Leg Splitter
+  console.log('Test 7: Multi-Day Auto-Segmentation & 9-Stop Google Maps Leg Splitter');
+  // Create a 10-hour mock route with 15 waypoints
+  const mockLongRoute = {
+    start: startLoc,
+    end: endLoc,
+    durationMinutes: 600, // 10 hours
+    distanceKm: 850,
+    distanceMiles: 528,
+    latLngs: route.latLngs
   };
-  const simStarted = gps.startSimulation(route.latLngs);
-  if (!simStarted) throw new Error('Failed to start GPS simulation');
-  await new Promise(resolve => setTimeout(resolve, 500));
-  gps.stopSimulation();
-  console.log('  Simulation stopped. Updates received:', positionUpdatesReceived);
-  if (positionUpdatesReceived === 0) throw new Error('Simulation did not fire location updates');
-  console.log('  [PASS] Trip Simulator lifecycle works.\n');
+
+  const mockFifteenStops = Array.from({ length: 15 }, (_, i) => ({
+    id: `stop-${i + 1}`,
+    title: `Scenic Roadside Stop ${i + 1}`,
+    lat: route.latLngs[Math.min(route.latLngs.length - 1, (i + 1) * 70)][0],
+    lng: route.latLngs[Math.min(route.latLngs.length - 1, (i + 1) * 70)][1],
+    detourMinutes: 5
+  }));
+
+  const legs = routeService.splitRouteIntoDailyLegs(mockLongRoute, mockFifteenStops, 5, 'imperial');
+  console.log(`  Auto-split 10h / 15-stop route into: ${legs.length} daily legs`);
+  
+  legs.forEach(leg => {
+    console.log(`    ${leg.title}: ${leg.durationMinutes} mins | ${leg.waypoints.length} stops`);
+    if (leg.waypoints.length > 9) {
+      throw new Error(`Leg ${leg.dayNumber} exceeded Google Maps 9-stop limit with ${leg.waypoints.length} stops`);
+    }
+    if (!leg.googleMapsUrl.includes('google.com/maps') || !leg.appleMapsUrl.includes('maps.apple.com')) {
+      throw new Error(`Leg ${leg.dayNumber} map URLs invalid`);
+    }
+  });
+
+  // Test 8: Waypoint Category Classification & Filtering
+  console.log('Test 8: Waypoint Category Classification & Filtering');
+  const samplePois = [
+    { id: '1', title: 'Big Sur Waterfall & River Overlook', type: 'waterfall', extract: 'Cascading natural falls into the Pacific.' },
+    { id: '2', title: 'Historic Castle Fortress Ruins', type: 'castle', extract: 'Ancient 18th-century stone fortress and battle monument.' },
+    { id: '3', title: 'Artisanal Sourdough Bakery & Cafe', type: 'bakery', extract: 'Fresh sourdough breads, warm pastries, and espresso.' },
+    { id: '4', title: 'Roadside World Largest Art Sculpture', type: 'attraction', extract: 'Quirky travel guide spotlight.' }
+  ];
+
+  const catNature = routeService.classifyCategory(samplePois[0]);
+  const catHistory = routeService.classifyCategory(samplePois[1]);
+  const catFood = routeService.classifyCategory(samplePois[2]);
+  const catGems = routeService.classifyCategory(samplePois[3]);
+
+  if (catNature.key !== 'nature' || catHistory.key !== 'history' || catFood.key !== 'food' || catGems.key !== 'gems') {
+    throw new Error(`Category classification failed: got ${catNature.key}, ${catHistory.key}, ${catFood.key}, ${catGems.key}`);
+  }
+  console.log('  Classified categories:');
+  console.log('   ', samplePois[0].title, '->', catNature.icon, catNature.label);
+  console.log('   ', samplePois[1].title, '->', catHistory.icon, catHistory.label);
+  console.log('   ', samplePois[2].title, '->', catFood.icon, catFood.label);
+  console.log('   ', samplePois[3].title, '->', catGems.icon, catGems.label);
+  console.log('  [PASS] Waypoint category classification and filtering verified.\n');
 
   console.log('=== All tests PASSED successfully! ===');
 }

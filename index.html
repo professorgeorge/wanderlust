@@ -73,13 +73,6 @@
         <span>Scrapbook</span>
       </button>
 
-      <!-- Simulation Selector -->
-      <button id="sim-btn" class="icon-btn" title="Simulate Scenic Drive">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-        </svg>
-        <span>Simulation</span>
-      </button>
 
       <!-- Settings Button -->
       <button id="settings-btn" class="icon-btn" title="Settings">
@@ -129,12 +122,24 @@
           <input type="range" id="hud-budget-slider" min="0" max="60" step="5" value="20" title="Detour Budget Slack">
         </div>
 
-        <!-- Live Narration Banner -->
+        <!-- Live Narration & Replay Banner -->
         <div id="speaking-banner" class="speaking-banner">
-          <div class="audio-waves">
-            <span></span><span></span><span></span><span></span>
+          <div id="speaking-active-view" style="display: flex; align-items: center; gap: 8px; width: 100%;">
+            <div class="audio-waves">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <span id="speaking-text" style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Narrating landmark...</span>
+            <button id="banner-skip-btn" class="banner-ctrl-btn banner-skip-btn" title="Skip this landmark story">
+              ⏭️ Skip
+            </button>
           </div>
-          <span id="speaking-text">Narrating landmark...</span>
+          <div id="speaking-replay-view" style="display: none; align-items: center; gap: 8px; width: 100%;">
+            <span id="replay-title-text" style="flex: 1; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c9d1d9;">Last: Landmark</span>
+            <button id="banner-replay-btn" class="banner-ctrl-btn banner-replay-btn" title="Replay previous story">
+              🔁 Replay
+            </button>
+            <button id="banner-dismiss-btn" class="banner-close-btn" title="Dismiss">&times;</button>
+          </div>
         </div>
       </div>
     </div>
@@ -152,6 +157,15 @@
         <div style="display: flex; gap: 8px; align-items: center;">
           <span id="feed-count" class="feed-count">0 Nearby</span>
         </div>
+      </div>
+
+      <!-- Discovery Feed Category Filter -->
+      <div class="feed-category-bar" id="feed-category-bar">
+        <button class="feed-cat-chip active" data-cat="all">🌟 All</button>
+        <button class="feed-cat-chip" data-cat="nature">🌲 Nature</button>
+        <button class="feed-cat-chip" data-cat="history">🏛️ History</button>
+        <button class="feed-cat-chip" data-cat="food">🍞 Food</button>
+        <button class="feed-cat-chip" data-cat="gems">🧭 Gems</button>
       </div>
 
       <!-- Dynamic Cards -->
@@ -236,6 +250,12 @@
     <div class="hud-actions-row">
       <button id="oled-speak-btn" class="oled-action-btn primary">
         🔊 Speak Story Now
+      </button>
+      <button id="oled-skip-btn" class="oled-action-btn skip" style="display: none;">
+        ⏭️ Skip Story
+      </button>
+      <button id="oled-replay-btn" class="oled-action-btn replay" style="display: none;">
+        🔁 Replay Story
       </button>
       <a id="oled-detour-btn" href="#" target="_blank" rel="noopener noreferrer" class="oled-action-btn detour">
         🚗 Google Maps Detour &rarr;
@@ -377,13 +397,65 @@
         </div>
       </div>
 
+      <!-- Corridor Guidance Note -->
+      <div id="corridor-hint-banner" style="display: none; background: rgba(88, 166, 255, 0.08); border: 1px solid rgba(88, 166, 255, 0.25); border-radius: 6px; padding: 8px 12px; font-size: 0.76rem; color: var(--text-main); margin-top: 8px;">
+        💡 <strong>Live Roadside Audio:</strong> All markers along your route will be automatically announced as you drive past (with 1-tap Skip &amp; Replay). Checking stops below adds them to your Google Maps detour navigation.
+      </div>
+
+      <!-- Google Maps 9-Stop Limit & Multi-Day Suggestion Notice -->
+      <div id="route-gmaps-limit-alert" style="display: none; background: rgba(227, 179, 65, 0.12); border: 1px solid rgba(227, 179, 65, 0.35); border-radius: 6px; padding: 10px 14px; font-size: 0.78rem; color: #f0e6c5; margin-top: 10px;">
+        <div style="font-weight: 700; color: #e3b341; margin-bottom: 2px;">ℹ️ Google Maps Limit &amp; Multi-Day Itinerary</div>
+        <div id="route-gmaps-limit-text">You have selected more than 9 detour stops. Google Maps accepts up to 9 intermediate stops per link. We've automatically split your trip into Day Legs below so every stop opens seamlessly in Google Maps!</div>
+      </div>
+
+      <!-- Corridor Category Filter Pill Bar & Bulk Actions -->
+      <div id="corridor-category-bar" style="display: none; margin-top: 10px; margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div class="category-filter-pills" id="corridor-cat-pills">
+            <button class="cat-pill active" data-cat="all">🌟 All (<span id="cat-count-all">0</span>)</button>
+            <button class="cat-pill" data-cat="nature">🌲 Nature (<span id="cat-count-nature">0</span>)</button>
+            <button class="cat-pill" data-cat="history">🏛️ History (<span id="cat-count-history">0</span>)</button>
+            <button class="cat-pill" data-cat="food">🍞 Food &amp; Farms (<span id="cat-count-food">0</span>)</button>
+            <button class="cat-pill" data-cat="gems">🧭 Gems (<span id="cat-count-gems">0</span>)</button>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <button id="corridor-select-visible-btn" class="corridor-quick-btn" title="Select all currently visible stops in this category">
+              ✓ Select All in Category
+            </button>
+            <button id="corridor-deselect-visible-btn" class="corridor-quick-btn" title="Deselect all currently visible stops">
+              ✗ Clear
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Corridor Waypoint Candidate Checklist -->
       <div id="corridor-list" class="corridor-list"></div>
 
+      <!-- Multi-Day Itinerary Legs Section -->
+      <div id="route-daily-legs-container" style="display: none; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <span style="font-weight: 700; font-size: 0.9rem; color: var(--text-main);">📅 Multi-Day Trip Legs</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 6px;">(Auto-split into daily drives)</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 0.78rem;">
+            <label for="daily-target-hours-select" style="color: var(--text-muted);">Pacing:</label>
+            <select id="daily-target-hours-select" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text-main); padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; outline: none;">
+              <option value="4">~4 Hours / Day (Leisurely)</option>
+              <option value="5" selected>~5 Hours / Day (Recommended)</option>
+              <option value="6">~6 Hours / Day (Active)</option>
+              <option value="8">~8 Hours / Day (Long-haul)</option>
+            </select>
+          </div>
+        </div>
+        <div id="route-daily-legs-list" class="daily-legs-list"></div>
+      </div>
+
       <!-- Action Buttons -->
-      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px;">
         <button id="route-simulate-btn" class="btn-start" style="padding: 10px 16px; font-size: 0.85rem; width: auto; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%); display: none;">
-          🚗 Simulate Drive On This Route
+          🚗 Simulate Full Drive
         </button>
         <a id="launch-gmaps-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="display: none;">
           🗺️ Google Maps &rarr;
@@ -392,77 +464,12 @@
           🍏 Apple Maps
         </a>
         <button id="export-gpx-btn" class="btn-gpx-export" style="display: none;">
-          📥 Save GPX
+          📥 Save Full GPX
         </button>
       </div>
     </div>
   </div>
 
-  <!-- Simulation Settings Modal -->
-  <div id="sim-modal" class="modal">
-    <div class="modal-card" style="max-width: 580px;">
-      <div class="modal-header">
-        <h3>🚗 Custom Road Trip Simulator</h3>
-        <button id="close-sim-btn" class="close-btn">&times;</button>
-      </div>
-
-      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
-        Simulate driving along any route worldwide. Test voice alerts, forward cone filtering, and spontaneous detours without being on the road.
-      </p>
-
-      <!-- Origin & Destination Inputs with Live Autocomplete -->
-      <div class="route-input-group">
-        <div class="route-input-row">
-          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🟢</span>
-          <div class="autocomplete-container">
-            <input type="text" id="sim-origin-input" placeholder="Origin (or tap '📍 Here')" autocomplete="off">
-            <div id="sim-origin-suggestions" class="autocomplete-dropdown"></div>
-          </div>
-          <button id="sim-my-loc-btn" class="icon-btn" title="Use My Current GPS Location">📍 Here</button>
-        </div>
-        <div class="route-input-row">
-          <span style="font-size: 1.1rem; width: 24px; text-align: center;">🔴</span>
-          <div class="autocomplete-container">
-            <input type="text" id="sim-dest-input" placeholder="Destination" autocomplete="off">
-            <div id="sim-dest-suggestions" class="autocomplete-dropdown"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="setting-row" style="margin-top: 14px;">
-        <label>Simulation Speed: <span id="sim-speed-val">3x (Cruising Speed)</span></label>
-        <input type="range" id="sim-speed-slider" min="1" max="10" value="3">
-      </div>
-
-      <div id="sim-status" style="font-size: 0.82rem; color: var(--text-muted); margin: 6px 0;"></div>
-
-      <!-- Multiple Route Choice Cards for Simulation -->
-      <div id="sim-route-options-container" class="route-options-container" style="display: none;"></div>
-
-      <!-- Simulation En-Route Predictive Weather Forecast Strip -->
-      <div id="sim-route-weather-preview" class="route-weather-preview" style="display: none;"></div>
-
-      <button id="start-sim-action" class="btn-start" style="margin-top: 10px; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%);">
-        🚗 Calculate Route & Start Simulated Drive
-      </button>
-
-      <!-- Transfer Navigation App Links for Simulated Trip -->
-      <div id="sim-nav-row" style="display: none; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
-        <label style="font-size: 0.82rem; color: var(--text-muted); display: block; margin-bottom: 8px;">Transfer this trip to navigation app:</label>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <a id="sim-gmaps-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="flex: 1; min-width: 140px; font-size: 0.8rem; justify-content: center;">
-            🗺️ Google Maps
-          </a>
-          <a id="sim-apple-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="flex: 1; min-width: 140px; font-size: 0.8rem; justify-content: center; background: linear-gradient(135deg, #30363d 0%, #484f58 100%);">
-            🍏 Apple Maps
-          </a>
-          <button id="sim-export-gpx-btn" class="btn-gpx-export" style="flex: 1; min-width: 110px; font-size: 0.8rem; justify-content: center;">
-            📥 Save GPX
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- Road Trip Scrapbook Modal -->
   <div id="scrapbook-modal" class="modal">
@@ -611,6 +618,13 @@
       <div class="setting-row">
         <label>Device Voice Selection:</label>
         <select id="voice-select"></select>
+      </div>
+
+      <!-- Simulation Speed Multiplier -->
+      <div class="setting-row">
+        <label>Simulation Speed: <span id="sim-speed-val">3x (Cruising Speed)</span></label>
+        <input type="range" id="sim-speed-slider" min="1" max="10" value="3">
+        <div class="setting-desc">Sets vehicle playback speed when simulating a planned road trip route.</div>
       </div>
 
       <!-- Data Backup & Multi-Device Transfer -->

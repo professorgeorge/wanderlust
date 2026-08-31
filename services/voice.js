@@ -17,6 +17,8 @@ export class VoiceService {
     this.cooldownSeconds = 180; // 3 minutes cooldown between auto-narrations
     this.onStateChange = null;
     this.speechHeartbeatTimer = null;
+    this.currentPoi = null;
+    this.lastPoi = null;
 
     this.initVoices();
   }
@@ -96,6 +98,26 @@ export class VoiceService {
   }
 
   /**
+   * Update MediaSession metadata for Car Bluetooth / Lock Screen
+   */
+  updateMediaSession(poi) {
+    if ('mediaSession' in navigator && poi) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: poi.title || 'Roadside Story',
+          artist: 'The Wandering Layer',
+          album: poi.shortDescription || 'Audio Companion',
+          artwork: [
+            { src: poi.thumbnail || 'https://raw.githubusercontent.com/feathericons/feather/master/icons/compass.svg', sizes: '512x512', type: 'image/svg+xml' }
+          ]
+        });
+      } catch (e) {
+        console.warn('MediaSession metadata error:', e);
+      }
+    }
+  }
+
+  /**
    * Narrate a landmark discovery
    */
   async narrate(poi, options = {}) {
@@ -104,7 +126,7 @@ export class VoiceService {
     const now = Date.now();
     const isManual = options.force === true;
 
-    // Cooldown check for automatic triggers
+    // Cooldown check for automatic triggers (e.g. 30s to 180s)
     if (!isManual && (now - this.lastSpokenTime) < (this.cooldownSeconds * 1000)) {
       return false;
     }
@@ -115,8 +137,12 @@ export class VoiceService {
 
     if (this.isSpeaking) return false;
 
+    this.currentPoi = poi;
     this.unlockAudio();
     await this.playChime();
+
+    // Check if stopped/skipped during chime
+    if (this.currentPoi !== poi) return false;
 
     let fullSpeech = '';
     let speechRate = this.rate;
@@ -173,7 +199,10 @@ export class VoiceService {
       utterance.onstart = () => {
         this.isSpeaking = true;
         this.lastSpokenTime = Date.now();
-        if (this.onStateChange) this.onStateChange({ isSpeaking: true, poi });
+        this.updateMediaSession(poi);
+        if (this.onStateChange) {
+          this.onStateChange({ isSpeaking: true, poi, lastPoi: this.lastPoi, wasSkipped: false });
+        }
 
         // Mobile speech keepalive: prevent long speech cutting off
         this.speechHeartbeatTimer = setInterval(() => {
@@ -187,7 +216,11 @@ export class VoiceService {
       utterance.onend = () => {
         cleanup();
         this.isSpeaking = false;
-        if (this.onStateChange) this.onStateChange({ isSpeaking: false, poi: null });
+        this.lastPoi = poi;
+        this.currentPoi = null;
+        if (this.onStateChange) {
+          this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
+        }
         resolve(true);
       };
 
@@ -195,12 +228,47 @@ export class VoiceService {
         cleanup();
         console.warn('SpeechSynthesis error:', err);
         this.isSpeaking = false;
-        if (this.onStateChange) this.onStateChange({ isSpeaking: false, poi: null });
+        this.lastPoi = poi;
+        this.currentPoi = null;
+        if (this.onStateChange) {
+          this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
+        }
         resolve(false);
       };
 
       this.synth.speak(utterance);
     });
+  }
+
+  /**
+   * 1-Tap Skip: Immediately cancel current narration and record as skipped
+   */
+  skip() {
+    const skippedPoi = this.currentPoi;
+    if (this.synth) {
+      this.synth.cancel();
+    }
+    if (this.speechHeartbeatTimer) {
+      clearInterval(this.speechHeartbeatTimer);
+      this.speechHeartbeatTimer = null;
+    }
+    this.isSpeaking = false;
+    if (skippedPoi) {
+      this.lastPoi = skippedPoi;
+    }
+    this.currentPoi = null;
+    this.lastSpokenTime = Date.now() - (this.cooldownSeconds * 1000) + 5000; // Brief 5s pause before next
+
+    if (this.onStateChange) {
+      this.onStateChange({
+        isSpeaking: false,
+        poi: null,
+        lastPoi: this.lastPoi,
+        wasSkipped: true,
+        skippedPoi: skippedPoi
+      });
+    }
+    return skippedPoi;
   }
 
   stop() {
@@ -211,7 +279,10 @@ export class VoiceService {
         this.speechHeartbeatTimer = null;
       }
       this.isSpeaking = false;
-      if (this.onStateChange) this.onStateChange({ isSpeaking: false, poi: null });
+      this.currentPoi = null;
+      if (this.onStateChange) {
+        this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
+      }
     }
   }
 

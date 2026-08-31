@@ -383,6 +383,48 @@ export class RouteService {
   }
 
   /**
+   * Semantically classify POI into one of 4 major road trip categories:
+   * 'nature' | 'history' | 'food' | 'gems'
+   */
+  classifyCategory(poi) {
+    if (!poi) return { key: 'gems', label: 'Travel Gems & Lore', icon: '🧭' };
+
+    const type = (poi.type || '').toLowerCase();
+    const cat = (poi.category || '').toLowerCase();
+    const text = `${poi.title || ''} ${poi.extract || ''} ${poi.shortDescription || ''}`.toLowerCase();
+
+    // 1. Food & Drink / Bakeries / Markets / Wineries / Farms
+    if (
+      cat === 'food_craft' ||
+      ['bakery', 'cafe', 'marketplace', 'farm', 'restaurant', 'winery', 'brewery', 'pub', 'ice_cream', 'deli'].includes(type) ||
+      /\b(bakery|cafe|coffee|roastery|brewery|winery|vineyard|orchard|farm|market|produce|cheese|cider|chocolat|eatery|tasting)\b/i.test(text)
+    ) {
+      return { key: 'food', label: 'Food & Bakeries', icon: '🍞' };
+    }
+
+    // 2. Nature & Scenic / Views / Waterfalls / Mountains
+    if (
+      cat === 'vista' ||
+      ['waterfall', 'viewpoint', 'peak', 'natural', 'spring', 'cave_entrance', 'picnic_site'].includes(type) ||
+      /\b(waterfall|falls|viewpoint|overlook|scenic|mountain|peak|summit|ridge|canyon|gorge|lake|river|creek|beach|cove|park|preserve|reserve|forest|trail|cave|spring|valley)\b/i.test(text)
+    ) {
+      return { key: 'nature', label: 'Nature & Scenic', icon: '🌲' };
+    }
+
+    // 3. History & Heritage / Castles / Monuments / Ruins / Museums
+    if (
+      cat === 'lore' ||
+      ['historic', 'castle', 'ruins', 'archaeological_site', 'monument', 'wayside_shrine', 'memorial', 'battlefield'].includes(type) ||
+      /\b(historic|history|castle|ruin|fort|fortress|monument|memorial|museum|heritage|archaeolog|battle|ancient|century|shrine|cathedral|church|chapel|temple|mission|mansion|landmark)\b/i.test(text)
+    ) {
+      return { key: 'history', label: 'History & Heritage', icon: '🏛️' };
+    }
+
+    // 4. Default: Travel Gems & Lore
+    return { key: 'gems', label: 'Travel Gems & Lore', icon: '🧭' };
+  }
+
+  /**
    * Fast corridor discovery along polyline with predictive arrival-time weather
    * Queries Wikipedia, OSM (markets, viewpoints, farm stands), and computes point-in-time forecasts
    */
@@ -427,6 +469,11 @@ export class RouteService {
           const routeDist = this.currentRoute.distanceMeters || 1;
           const fraction = Math.min(1, Math.max(0, projectionDistance / routeDist));
           const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
+
+          const catInfo = this.classifyCategory(poi);
+          poi.categoryKey = catInfo.key;
+          poi.categoryLabel = catInfo.label;
+          poi.categoryIcon = catInfo.icon;
 
           poi.distanceFromRouteMeters = Math.round(minDistance);
           poi.projectionDistanceMeters = projectionDistance;
@@ -643,6 +690,139 @@ export class RouteService {
 
     gpx += `</gpx>`;
     return gpx;
+  }
+
+  /**
+   * Split long-distance routes into daily legs (e.g. ~5 hours/day and max 8-9 stops/leg)
+   */
+  splitRouteIntoDailyLegs(route, selectedWaypoints = [], targetHoursPerLeg = 5, unitSystem = 'metric') {
+    if (!route || !route.latLngs || route.latLngs.length < 2) return [];
+
+    const sortedWaypoints = this.sequenceWaypoints(selectedWaypoints, route.latLngs);
+    const targetMinutesPerLeg = targetHoursPerLeg * 60;
+    const totalDriveMinutes = route.durationMinutes;
+    const totalDetourMinutes = sortedWaypoints.reduce((sum, wp) => sum + (wp.detourMinutes || 5), 0);
+    const totalTripMinutes = totalDriveMinutes + totalDetourMinutes;
+
+    // Determine number of legs needed (by driving time and by 9-stop Google Maps cap)
+    const legsByTime = Math.max(1, Math.ceil(totalTripMinutes / targetMinutesPerLeg));
+    const legsByWaypoints = Math.max(1, Math.ceil(sortedWaypoints.length / 8)); // 8 stops max per leg to leave room for endpoints
+    const totalLegsCount = Math.max(legsByTime, legsByWaypoints);
+
+    if (totalLegsCount <= 1 && totalTripMinutes < 330 && sortedWaypoints.length <= 9) {
+      // Single-day trip fits cleanly in 1 leg
+      return [{
+        dayNumber: 1,
+        title: `Day 1: ${route.start.name} to ${route.end.name}`,
+        start: route.start,
+        end: route.end,
+        waypoints: sortedWaypoints,
+        durationMinutes: totalTripMinutes,
+        driveOnlyMinutes: route.durationMinutes,
+        distanceKm: route.distanceKm,
+        distanceMiles: route.distanceMiles,
+        latLngs: route.latLngs,
+        googleMapsUrl: this.generateGoogleMapsUrl(route.start, route.end, sortedWaypoints),
+        appleMapsUrl: this.generateAppleMapsUrl(route.start, route.end, sortedWaypoints)
+      }];
+    }
+
+    // Segment polyline vertices and waypoints proportionally
+    const polyline = route.latLngs;
+    const totalPolyPoints = polyline.length;
+    const legs = [];
+
+    // Calculate cumulative distances along polyline
+    const cumDistances = [0];
+    for (let i = 0; i < totalPolyPoints - 1; i++) {
+      const d = this.calcDist(polyline[i][0], polyline[i][1], polyline[i + 1][0], polyline[i + 1][1]);
+      cumDistances.push(cumDistances[i] + d);
+    }
+    const totalMeters = cumDistances[cumDistances.length - 1] || 1;
+
+    // Assign projection fraction to each waypoint
+    sortedWaypoints.forEach(wp => {
+      const proj = this.calculateRouteProjection(wp.lat, wp.lng, polyline);
+      wp._routeFraction = proj.projectionDistance / totalMeters;
+    });
+
+    let lastEndPt = route.start;
+    let lastPolyIdx = 0;
+
+    for (let day = 1; day <= totalLegsCount; day++) {
+      const startFraction = (day - 1) / totalLegsCount;
+      const endFraction = day / totalLegsCount;
+
+      const isLastDay = day === totalLegsCount;
+
+      // Polyline segment for this day
+      const targetEndDist = endFraction * totalMeters;
+      let legEndPolyIdx = totalPolyPoints - 1;
+      if (!isLastDay) {
+        legEndPolyIdx = cumDistances.findIndex(d => d >= targetEndDist);
+        if (legEndPolyIdx === -1 || legEndPolyIdx <= lastPolyIdx) {
+          legEndPolyIdx = Math.min(totalPolyPoints - 1, Math.round(endFraction * totalPolyPoints));
+        }
+      }
+
+      const legPoly = polyline.slice(lastPolyIdx, legEndPolyIdx + 1);
+      const legStart = lastEndPt;
+
+      // Waypoints falling into this segment (max 8 per leg)
+      let legWaypoints = sortedWaypoints.filter(wp => {
+        if (isLastDay) {
+          return wp._routeFraction >= startFraction;
+        }
+        return wp._routeFraction >= startFraction && wp._routeFraction < endFraction;
+      });
+
+      // Cap at 8 waypoints per leg so Google Maps never exceeds 9 intermediate stops
+      if (legWaypoints.length > 8) {
+        legWaypoints = legWaypoints.slice(0, 8);
+      }
+
+      // Determine end point for this day leg
+      let legEnd = null;
+      if (isLastDay) {
+        legEnd = route.end;
+      } else {
+        const lastWp = legWaypoints[legWaypoints.length - 1];
+        const endCoord = polyline[legEndPolyIdx] || polyline[polyline.length - 1];
+        const cleanName = lastWp ? lastWp.title.replace(/^[^a-zA-Z0-9]+/, '').slice(0, 22) : `Midway Point`;
+        legEnd = {
+          name: `${cleanName} (Day ${day} Overnight)`,
+          lat: endCoord[0],
+          lng: endCoord[1]
+        };
+      }
+
+      const legDistanceMeters = (cumDistances[legEndPolyIdx] || totalMeters) - (cumDistances[lastPolyIdx] || 0);
+      const legDistKm = Math.round(legDistanceMeters / 1000);
+      const legDistMiles = Math.round(legDistanceMeters * 0.000621371);
+      const legDriveMins = Math.round((legDistanceMeters / totalMeters) * totalDriveMinutes);
+      const legDetourMins = legWaypoints.reduce((sum, wp) => sum + (wp.detourMinutes || 5), 0);
+      const legTotalMins = legDriveMins + legDetourMins;
+
+      legs.push({
+        dayNumber: day,
+        title: `Day ${day}: ${legStart.name} → ${legEnd.name}`,
+        start: legStart,
+        end: legEnd,
+        waypoints: legWaypoints,
+        durationMinutes: legTotalMins,
+        driveOnlyMinutes: legDriveMins,
+        distanceKm: legDistKm,
+        distanceMiles: legDistMiles,
+        latLngs: legPoly.length >= 2 ? legPoly : polyline,
+        googleMapsUrl: this.generateGoogleMapsUrl(legStart, legEnd, legWaypoints),
+        appleMapsUrl: this.generateAppleMapsUrl(legStart, legEnd, legWaypoints)
+      });
+
+      lastEndPt = legEnd;
+      lastPolyIdx = legEndPolyIdx;
+    }
+
+    return legs;
   }
 
   calcDist(lat1, lon1, lat2, lon2) {

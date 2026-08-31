@@ -87,7 +87,7 @@ export class WikiService {
 
       if (!data?.query?.geosearch) return [];
 
-      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(item.pageid)).slice(0, limit || 3);
+      const candidateItems = data.query.geosearch.filter(item => !this.isNarrated(item.pageid) && !this.isNarrated(`wiki-${item.pageid}`)).slice(0, limit || 3);
       
       const summaryPromises = candidateItems.map(async (item) => {
         try {
@@ -128,7 +128,7 @@ export class WikiService {
       const data = await res.json();
       if (!data?.query?.geosearch) return [];
 
-      const candidateItems = data.query.geosearch.filter(item => !this.narratedPages.has(`voyage-${item.pageid}`));
+      const candidateItems = data.query.geosearch.filter(item => !this.isNarrated(item.pageid) && !this.isNarrated(`voyage-${item.pageid}`));
 
       const summaryPromises = candidateItems.map(async (item) => {
         try {
@@ -196,9 +196,29 @@ export class WikiService {
     }
   }
 
+  isNarrated(pageidOrId) {
+    if (!pageidOrId) return false;
+    const strId = String(pageidOrId);
+    if (this.narratedPages.has(strId)) return true;
+    const rawNum = strId.replace(/^(wiki|voyage)-/, '');
+    return this.narratedPages.has(rawNum) ||
+           this.narratedPages.has(Number(rawNum)) ||
+           this.narratedPages.has(`wiki-${rawNum}`) ||
+           this.narratedPages.has(`voyage-${rawNum}`);
+  }
+
   markAsNarrated(pageidOrId) {
-    const rawId = String(pageidOrId).replace(/^(wiki|voyage)-/, '');
-    this.narratedPages.add(Number(rawId) || rawId);
+    if (!pageidOrId) return;
+    const strId = String(pageidOrId);
+    this.narratedPages.add(strId);
+    const rawNum = strId.replace(/^(wiki|voyage)-/, '');
+    if (rawNum) {
+      this.narratedPages.add(rawNum);
+      const num = Number(rawNum);
+      if (!isNaN(num)) this.narratedPages.add(num);
+      this.narratedPages.add(`wiki-${rawNum}`);
+      this.narratedPages.add(`voyage-${rawNum}`);
+    }
   }
 
   resetNarrated() {

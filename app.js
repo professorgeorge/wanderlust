@@ -60,6 +60,16 @@ class WanderingLayerApp {
     this.lastScanCoords = null;
     this.activePoiForOled = null;
 
+    // Single Announcement & Replay Tracking
+    this.narratedPoiIds = new Set();
+    this.skippedPoiIds = new Set();
+    this.lastNarratedPoi = null;
+
+    // Category Filtering State
+    this.activeFeedCategory = 'all';
+    this.activeCorridorCategory = 'all';
+    this.rawCorridorPois = [];
+
     this.initServiceWorker();
     this.initMap();
     this.loadInitialData();
@@ -260,20 +270,66 @@ class WanderingLayerApp {
   bindEvents() {
     this.gps.onLocationUpdate = (pos) => this.handleLocationUpdate(pos);
 
-    this.voice.onStateChange = ({ isSpeaking, poi }) => {
+    this.voice.onStateChange = ({ isSpeaking, poi, lastPoi, wasSkipped }) => {
       const banner = document.getElementById('speaking-banner');
+      const activeView = document.getElementById('speaking-active-view');
+      const replayView = document.getElementById('speaking-replay-view');
       const bannerText = document.getElementById('speaking-text');
+      const replayTitleText = document.getElementById('replay-title-text');
+
       if (isSpeaking && poi) {
-        banner.classList.add('active');
-        bannerText.textContent = `Whispering: ${poi.title}`;
+        if (banner) {
+          banner.style.display = 'flex';
+          banner.classList.add('active');
+          banner.classList.remove('replay-ready');
+        }
+        if (activeView) activeView.style.display = 'flex';
+        if (replayView) replayView.style.display = 'none';
+        if (bannerText) bannerText.textContent = `Whispering: ${poi.title}`;
+
         this.highlightCard(poi.id, true);
         this.activePoiForOled = poi;
         this.updateOledDisplay(poi);
+        this.renderFeed();
       } else {
-        banner.classList.remove('active');
+        const fallbackLast = this.lastNarratedPoi || lastPoi;
+        if (fallbackLast && banner) {
+          banner.style.display = 'flex';
+          banner.classList.remove('active');
+          banner.classList.add('replay-ready');
+          if (activeView) activeView.style.display = 'none';
+          if (replayView) replayView.style.display = 'flex';
+          if (replayTitleText) {
+            replayTitleText.textContent = `${wasSkipped ? 'Skipped' : 'Last Story'}: ${fallbackLast.title}`;
+          }
+        } else if (banner) {
+          banner.style.display = 'none';
+          banner.classList.remove('active', 'replay-ready');
+        }
         this.highlightCard(null, false);
+        if (this.activePoiForOled) {
+          this.updateOledDisplay(this.activePoiForOled);
+        }
+        this.renderFeed();
       }
     };
+
+    // Speaking Banner Action Buttons
+    document.getElementById('banner-skip-btn')?.addEventListener('click', () => {
+      this.skipCurrentStory();
+    });
+
+    document.getElementById('banner-replay-btn')?.addEventListener('click', () => {
+      this.replayLastStory();
+    });
+
+    document.getElementById('banner-dismiss-btn')?.addEventListener('click', () => {
+      const banner = document.getElementById('speaking-banner');
+      if (banner) {
+        banner.style.display = 'none';
+        banner.classList.remove('replay-ready', 'active');
+      }
+    });
 
     // Live GPS Start/Stop button
     const startBtn = document.getElementById('start-journey-btn');
@@ -331,19 +387,25 @@ class WanderingLayerApp {
       drivingHudView.style.display = 'none';
     });
 
-    document.getElementById('oled-speak-btn').addEventListener('click', () => {
+    document.getElementById('oled-speak-btn')?.addEventListener('click', () => {
       if (this.activePoiForOled) {
-        this.voice.narrate(this.activePoiForOled, {
-          force: true,
-          isConcise: this.isConcise,
-          unitSystem: this.unitSystem,
-          relativeBearing: this.activePoiForOled.relativeBearing,
-          personaService: this.personas
-        });
+        this.replayPoi(this.activePoiForOled);
       }
     });
 
-    document.getElementById('oled-pin-btn').addEventListener('click', () => {
+    document.getElementById('oled-skip-btn')?.addEventListener('click', () => {
+      this.skipCurrentStory();
+    });
+
+    document.getElementById('oled-replay-btn')?.addEventListener('click', () => {
+      if (this.activePoiForOled) {
+        this.replayPoi(this.activePoiForOled);
+      } else if (this.lastNarratedPoi) {
+        this.replayPoi(this.lastNarratedPoi);
+      }
+    });
+
+    document.getElementById('oled-pin-btn')?.addEventListener('click', () => {
       this.openWonderPinModal();
     });
 
@@ -445,6 +507,56 @@ class WanderingLayerApp {
         this.handleRouteScan();
       }
     });
+    document.getElementById('daily-target-hours-select')?.addEventListener('change', () => {
+      if (this.routeService.currentRoute) {
+        this.updateRouteSummary(this.routeService.currentRoute);
+      }
+    });
+
+    // Discovery Feed Category Chips
+    document.querySelectorAll('#feed-category-bar .feed-cat-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('#feed-category-bar .feed-cat-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        this.activeFeedCategory = chip.dataset.cat || 'all';
+        this.renderFeed();
+        this.evaluateAutomaticNarration(this.currentPois);
+      });
+    });
+
+    // Corridor Category Filter Pills
+    document.querySelectorAll('#corridor-cat-pills .cat-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        document.querySelectorAll('#corridor-cat-pills .cat-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        this.activeCorridorCategory = pill.dataset.cat || 'all';
+        this.renderCorridorList();
+      });
+    });
+
+    // Corridor Bulk Select / Deselect Visible
+    document.getElementById('corridor-select-visible-btn')?.addEventListener('click', () => {
+      const visible = this.getFilteredCorridorPois();
+      visible.forEach(poi => {
+        if (!this.selectedWaypoints.some(w => w.id === poi.id)) {
+          this.selectedWaypoints.push(poi);
+        }
+      });
+      this.renderCorridorList();
+      if (this.routeService.currentRoute) {
+        this.updateRouteSummary(this.routeService.currentRoute);
+      }
+    });
+
+    document.getElementById('corridor-deselect-visible-btn')?.addEventListener('click', () => {
+      const visibleIds = new Set(this.getFilteredCorridorPois().map(p => p.id));
+      this.selectedWaypoints = this.selectedWaypoints.filter(w => !visibleIds.has(w.id));
+      this.renderCorridorList();
+      if (this.routeService.currentRoute) {
+        this.updateRouteSummary(this.routeService.currentRoute);
+      }
+    });
+
     document.getElementById('export-gpx-btn').addEventListener('click', () => this.exportRouteGpx());
     document.getElementById('cache-route-offline-btn').addEventListener('click', () => this.handleOfflinePreCache());
 
@@ -472,144 +584,7 @@ class WanderingLayerApp {
       this.renderFeed();
     });
 
-    // Simulation Modal
-    const simBtn = document.getElementById('sim-btn');
-    const simModal = document.getElementById('sim-modal');
-    const closeSimBtn = document.getElementById('close-sim-btn');
-    simBtn.addEventListener('click', () => {
-      // If a route was already calculated in Route Builder, prefill it
-      if (this.routeService.currentRoute) {
-        document.getElementById('sim-origin-input').value = this.routeService.currentRoute.start?.name || '';
-        document.getElementById('sim-dest-input').value = this.routeService.currentRoute.end?.name || '';
-      }
-      simModal.classList.add('active');
-    });
-    closeSimBtn.addEventListener('click', () => simModal.classList.remove('active'));
-
-    document.getElementById('sim-my-loc-btn').addEventListener('click', () => {
-      this.locateUserForRoute(document.getElementById('sim-origin-input'), document.getElementById('sim-my-loc-btn'), document.getElementById('sim-status'));
-    });
-
-    document.getElementById('sim-export-gpx-btn').addEventListener('click', () => {
-      if (this.currentSimRoute) {
-        const r = this.currentSimRoute;
-        const gpxContent = this.routeService.exportToGpx(r.start, r.end, [], r.latLngs);
-        const blob = new Blob([gpxContent], { type: 'application/gpx+xml;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `simulated_drive_${r.start.name}_to_${r.end.name}.gpx`.replace(/\s+/g, '_');
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }
-    });
-
-    document.getElementById('start-sim-action').addEventListener('click', async () => {
-      const originInput = document.getElementById('sim-origin-input').value.trim().replace(/^📍\s*/, '');
-      const destInput = document.getElementById('sim-dest-input').value.trim();
-      const statusEl = document.getElementById('sim-status');
-      const startBtn = document.getElementById('start-journey-btn');
-
-      if (!originInput || !destInput) {
-        if (this.routeService.currentRoute?.latLngs) {
-          const r = this.routeService.currentRoute;
-          this.currentSimRoute = r;
-          this.voice.unlockAudio();
-          this.heartbeat.start();
-          this.journal.startSession();
-          this.gps.startSimulation(r.latLngs);
-          this.isTracking = true;
-
-          // Populate nav transfer links
-          document.getElementById('sim-gmaps-link').href = this.routeService.generateGoogleMapsUrl(r.start, r.end, []);
-          document.getElementById('sim-apple-link').href = this.routeService.generateAppleMapsUrl(r.start, r.end, []);
-          document.getElementById('sim-nav-row').style.display = 'block';
-
-          simModal.classList.remove('active');
-          document.getElementById('hud-status').textContent = 'Simulating Route';
-          startBtn.classList.add('tracking');
-          startBtn.innerHTML = `<span>Stop Simulation</span>`;
-          return;
-        }
-        statusEl.innerHTML = '<span style="color: #f85149;">Please provide both Origin and Destination.</span>';
-        return;
-      }
-
-      statusEl.innerHTML = '<span>⏳ Mapping route and launching drive simulation...</span>';
-
-      try {
-        let startCoords = this.selectedSimOrigin;
-        if (!startCoords || !originInput.includes(startCoords.name)) {
-          startCoords = await this.routeService.geocode(originInput);
-        }
-
-        let endCoords = this.selectedSimDest;
-        if (!endCoords || !destInput.includes(endCoords.name)) {
-          endCoords = await this.routeService.geocode(destInput);
-        }
-
-        if (!startCoords || !endCoords) {
-          statusEl.innerHTML = '<span style="color: #f85149;">Could not locate one of the endpoints.</span>';
-          return;
-        }
-
-        const route = await this.routeService.calculateRoute(startCoords, endCoords);
-        if (!route) {
-          statusEl.innerHTML = '<span style="color: #f85149;">Could not compute driving route between those locations.</span>';
-          return;
-        }
-
-        this.currentSimRoute = route;
-
-        // Draw route polyline on map
-        if (this.routePolyline) {
-          this.map.removeLayer(this.routePolyline);
-        }
-        this.routePolyline = L.polyline(route.latLngs, {
-          color: '#58a6ff',
-          weight: 6,
-          opacity: 0.9,
-          lineCap: 'round'
-        }).addTo(this.map);
-        this.map.fitBounds(this.routePolyline.getBounds(), { padding: [40, 40] });
-
-        // Predictive Route Weather Corridor Forecast
-        try {
-          const simWeatherPreview = document.getElementById('sim-route-weather-preview');
-          this.weather.getRouteWeatherForecast(route.latLngs, route.durationMinutes, this.unitSystem).then(fc => {
-            this.renderRouteWeatherPreview(fc, simWeatherPreview);
-          });
-        } catch (e) {}
-
-        // Populate navigation transfer links
-        document.getElementById('sim-gmaps-link').href = this.routeService.generateGoogleMapsUrl(startCoords, endCoords, []);
-        document.getElementById('sim-apple-link').href = this.routeService.generateAppleMapsUrl(startCoords, endCoords, []);
-        document.getElementById('sim-nav-row').style.display = 'block';
-
-        this.voice.unlockAudio();
-        this.heartbeat.start();
-        this.journal.startSession();
-
-        this.gps.startSimulation(route.latLngs);
-        this.isTracking = true;
-
-        statusEl.innerHTML = `<span>✓ Simulating drive &bull; ${route.distanceKm} km (${route.durationMinutes}m)</span>`;
-        
-        setTimeout(() => {
-          simModal.classList.remove('active');
-        }, 500);
-
-        document.getElementById('hud-status').textContent = 'Simulating Route';
-        startBtn.classList.add('tracking');
-        startBtn.innerHTML = `<span>Stop Simulation</span>`;
-      } catch (err) {
-        console.error('Simulation start error:', err);
-        statusEl.innerHTML = '<span style="color:#f85149;">Simulation could not start. Please try again.</span>';
-      }
-    });
-
+    // Simulation Speed Multiplier (in Settings Modal)
     document.getElementById('sim-speed-slider').addEventListener('input', (e) => {
       const val = e.target.value;
       document.getElementById('sim-speed-val').textContent = `${val}x (Cruising Speed)`;
@@ -864,6 +839,56 @@ class WanderingLayerApp {
     }, 400);
   }
 
+  skipCurrentStory() {
+    const skipped = this.voice.skip();
+    if (skipped) {
+      this.skippedPoiIds.add(skipped.id);
+      this.narratedPoiIds.add(skipped.id);
+      this.wiki.markAsNarrated(skipped.id);
+      this.osm.markAsNarrated(skipped.id);
+      this.pinsService.markAsNarrated(skipped.id);
+      this.lastNarratedPoi = skipped;
+    } else if (this.voice.currentPoi) {
+      const p = this.voice.currentPoi;
+      this.skippedPoiIds.add(p.id);
+      this.narratedPoiIds.add(p.id);
+      this.lastNarratedPoi = p;
+    }
+    this.voice.stop();
+    this.renderFeed();
+    if (this.activePoiForOled) {
+      this.updateOledDisplay(this.activePoiForOled);
+    }
+  }
+
+  replayLastStory() {
+    if (!this.lastNarratedPoi) return;
+    this.replayPoi(this.lastNarratedPoi);
+  }
+
+  replayPoi(poi) {
+    if (!poi) return;
+    this.voice.unlockAudio();
+    this.lastNarratedPoi = poi;
+    const relDir = poi.relativeBearing || this.gps.getRelativeDirection(poi.lat, poi.lng);
+    this.voice.narrate(poi, {
+      force: true,
+      isConcise: this.isConcise,
+      unitSystem: this.unitSystem,
+      relativeBearing: relDir,
+      personaService: this.personas
+    }).then(didNarrate => {
+      if (didNarrate) {
+        this.narratedPoiIds.add(poi.id);
+        this.wiki.markAsNarrated(poi.id);
+        this.osm.markAsNarrated(poi.id);
+        this.pinsService.markAsNarrated(poi.id);
+        this.journal.logEncounter(poi, true);
+        this.renderFeed();
+      }
+    });
+  }
+
   openWonderPinModal() {
     document.getElementById('pin-modal').classList.add('active');
   }
@@ -965,9 +990,28 @@ class WanderingLayerApp {
       return p.dist <= this.searchRadius;
     });
 
+    // Merge in corridor POIs (both selected & unselected) when along a planned route
+    const corridorList = (this.routeService.corridorPois || []).map(p => {
+      p.dist = Math.round(this.calculateDistance(lat, lng, p.lat, p.lng));
+      return p;
+    }).filter(p => p.dist <= Math.max(this.searchRadius, 4000));
+
     document.getElementById('hud-status').textContent = this.gps.isSimulating ? 'Simulating Drive' : 'Scanning';
 
-    const merged = [...nearbyPins, ...wikiPois, ...osmPois];
+    // Deduplicate merged POIs by unique ID and classify category
+    const mergedMap = new Map();
+    [...nearbyPins, ...corridorList, ...wikiPois, ...osmPois].forEach(p => {
+      if (p && p.id && !mergedMap.has(p.id)) {
+        if (!p.categoryKey) {
+          const cat = this.routeService.classifyCategory(p);
+          p.categoryKey = cat.key;
+          p.categoryLabel = cat.label;
+          p.categoryIcon = cat.icon;
+        }
+        mergedMap.set(p.id, p);
+      }
+    });
+    const merged = Array.from(mergedMap.values());
     this.currentPois = merged;
 
     merged.forEach(poi => this.journal.logEncounter(poi, false));
@@ -991,20 +1035,31 @@ class WanderingLayerApp {
     if (this.currentPois.length > 0 && !this.activePoiForOled) {
       this.updateOledDisplay(this.currentPois[0]);
     }
+
+    // Automatically evaluate narration as car approaches landmarks
+    this.evaluateAutomaticNarration(this.currentPois);
   }
 
   evaluateAutomaticNarration(pois) {
     if (!pois || pois.length === 0 || this.voice.isSpeaking) return;
 
-    let candidates = pois.filter(p => p.dist <= Math.min(this.searchRadius, 2500));
+    // Filter to candidates that have NOT been announced and NOT skipped yet
+    let candidates = pois.filter(p => !this.narratedPoiIds.has(p.id) && !this.skippedPoiIds.has(p.id));
 
-    if (this.useForwardConeFilter) {
+    // Filter by active live category preference (if driver selected a specific theme)
+    if (this.activeFeedCategory !== 'all') {
+      candidates = candidates.filter(p => (p.categoryKey || this.routeService.classifyCategory(p).key) === this.activeFeedCategory);
+    }
+
+    // Filter to approach distance (up to 2500m)
+    candidates = candidates.filter(p => p.dist <= Math.min(this.searchRadius, 2500));
+
+    if (this.useForwardConeFilter && this.gps.speed > 15) {
       candidates = candidates.filter(p => this.gps.isInForwardCone(p.lat, p.lng));
     }
 
-    if (this.budget.filterOnlyWithinBudget) {
-      candidates = candidates.filter(p => this.budget.estimateDetourCost(p.dist).fitsBudget);
-    }
+    // All passing markers along the road (selected or unselected) are announced in sequence
+    candidates.sort((a, b) => a.dist - b.dist);
 
     const candidate = candidates[0];
     if (candidate) {
@@ -1017,12 +1072,17 @@ class WanderingLayerApp {
         personaService: this.personas
       }).then(didNarrate => {
         if (didNarrate) {
+          this.narratedPoiIds.add(candidate.id);
+          this.lastNarratedPoi = candidate;
           if (candidate.source === 'wikipedia' || candidate.source === 'wikivoyage') {
             this.wiki.markAsNarrated(candidate.id);
           } else if (candidate.source === 'osm') {
             this.osm.markAsNarrated(candidate.id);
+          } else if (candidate.source === 'wonder_pin') {
+            this.pinsService.markAsNarrated(candidate.id);
           }
           this.journal.logEncounter(candidate, true);
+          this.renderFeed();
         }
       });
     }
@@ -1077,11 +1137,19 @@ class WanderingLayerApp {
       });
 
       const marker = L.marker([poi.lat, poi.lng], { icon: customIcon }).addTo(this.map);
+      const isAnnounced = this.narratedPoiIds.has(poi.id);
+      const audioBtnText = isAnnounced ? '🔁 Replay Story' : '🔊 Whisper Story';
+
       marker.bindPopup(`
-        <div style="font-family: sans-serif; color: #161b22; max-width: 220px;">
-          <h4 style="margin-bottom: 4px; font-size: 14px;">${poi.title}</h4>
+        <div style="font-family: sans-serif; color: #161b22; max-width: 230px;">
+          <h4 style="margin-bottom: 4px; font-size: 14px; color: #1f2328;">${poi.title}</h4>
           <p style="font-size: 12px; margin-bottom: 8px; color: #57606a;">${poi.extract.slice(0, 100)}...</p>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}" target="_blank" style="color: #0969da; font-weight: bold; font-size: 12px;">Detour in Google Maps &rarr;</a>
+          <div style="display: flex; gap: 8px; flex-direction: column; margin-top: 6px;">
+            <button onclick="window.app.replayPoi(window.app.currentPois.find(p=>p.id==='${poi.id}'))" style="background:#1f6feb;color:#fff;border:none;padding:5px 8px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;text-align:center;">
+              ${audioBtnText}
+            </button>
+            <a href="https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}" target="_blank" style="color: #0969da; font-weight: bold; font-size: 12px; text-decoration: none;">Detour in Google Maps &rarr;</a>
+          </div>
         </div>
       `);
 
@@ -1132,6 +1200,9 @@ class WanderingLayerApp {
     const countBadge = document.getElementById('feed-count');
 
     let visiblePois = this.currentPois;
+    if (this.activeFeedCategory !== 'all') {
+      visiblePois = visiblePois.filter(p => (p.categoryKey || this.routeService.classifyCategory(p).key) === this.activeFeedCategory);
+    }
     if (this.useForwardConeFilter && this.gps.speed > 15) {
       visiblePois = visiblePois.filter(p => this.gps.isInForwardCone(p.lat, p.lng));
     }
@@ -1146,7 +1217,7 @@ class WanderingLayerApp {
         <div class="empty-feed">
           <div class="icon">✨</div>
           <h3>Pure Wandering Mode</h3>
-          <p>No roadside landmarks matching your current filters within ${this.formatRadius(this.searchRadius)}.</p>
+          <p>No roadside landmarks matching your current category (${this.activeFeedCategory}) and filters within ${this.formatRadius(this.searchRadius)}.</p>
         </div>
       `;
       return;
@@ -1166,16 +1237,49 @@ class WanderingLayerApp {
       const detourBadge = this.budget.formatDetourBadge(poi.dist);
       const momentBadge = this.context.evaluatePoiMoment(poi, poi.lat, poi.lng);
 
-      let badgeLabel = '📖 STORY';
-      if (poi.source === 'osm') badgeLabel = '🌲 NATURE';
-      else if (poi.source === 'wonder_pin') badgeLabel = '✨ WONDER PIN';
-      else if (poi.source === 'wikivoyage') badgeLabel = '🧭 TRAVEL FOOTNOTE';
+      const catInfo = poi.categoryKey ? { key: poi.categoryKey, label: poi.categoryLabel, icon: poi.categoryIcon } : this.routeService.classifyCategory(poi);
+      let badgeLabel = `${catInfo.icon} ${catInfo.label.toUpperCase()}`;
+
+      const isAnnounced = this.narratedPoiIds.has(poi.id);
+      const isSpeakingThis = this.voice.isSpeaking && (this.voice.currentPoi?.id === poi.id);
+
+      let actionButtonHtml = '';
+      if (isSpeakingThis) {
+        actionButtonHtml = `
+          <button class="action-btn btn-skip-card" data-id="${poi.id}" title="Skip this story">
+            ⏭️ Skip Story
+          </button>
+        `;
+      } else if (isAnnounced) {
+        actionButtonHtml = `
+          <button class="action-btn btn-narrate btn-replay" data-id="${poi.id}" title="Replay this story">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+            </svg>
+            Replay
+          </button>
+        `;
+      } else {
+        actionButtonHtml = `
+          <button class="action-btn btn-narrate" data-id="${poi.id}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+            Whisper
+          </button>
+        `;
+      }
 
       card.innerHTML = `
         ${poi.thumbnail ? `<img src="${poi.thumbnail}" alt="${poi.title}" class="poi-image" loading="lazy">` : ''}
         <div class="poi-content">
           <div class="poi-meta">
-            <span class="poi-badge">${badgeLabel}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <span class="poi-badge">${badgeLabel}</span>
+              ${isAnnounced ? `<span class="badge-announced">✓ Announced</span>` : ''}
+            </div>
             <span class="poi-bearing">${relDir} (${distStr})</span>
           </div>
 
@@ -1187,13 +1291,7 @@ class WanderingLayerApp {
           <h3 class="poi-title">${poi.title}</h3>
           <p class="poi-extract">${poi.extract}</p>
           <div class="poi-actions">
-            <button class="action-btn btn-narrate" data-id="${poi.id}">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-              </svg>
-              Whisper
-            </button>
+            ${actionButtonHtml}
             <a href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer" class="action-btn btn-detour">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="15 3 21 3 21 9"></polyline>
@@ -1207,16 +1305,19 @@ class WanderingLayerApp {
         </div>
       `;
 
-      card.querySelector('.btn-narrate').addEventListener('click', () => {
-        this.voice.narrate(poi, {
-          force: true,
-          isConcise: this.isConcise,
-          unitSystem: this.unitSystem,
-          relativeBearing: relDir,
-          personaService: this.personas
+      const narrateBtn = card.querySelector('.btn-narrate');
+      if (narrateBtn) {
+        narrateBtn.addEventListener('click', () => {
+          this.replayPoi(poi);
         });
-        this.journal.logEncounter(poi, true);
-      });
+      }
+
+      const skipBtn = card.querySelector('.btn-skip-card');
+      if (skipBtn) {
+        skipBtn.addEventListener('click', () => {
+          this.skipCurrentStory();
+        });
+      }
 
       feed.appendChild(card);
     });
@@ -1233,6 +1334,9 @@ class WanderingLayerApp {
     const detourEl = document.getElementById('oled-poi-detour');
     const extractEl = document.getElementById('oled-poi-extract');
     const detourLink = document.getElementById('oled-detour-btn');
+    const speakBtn = document.getElementById('oled-speak-btn');
+    const skipBtn = document.getElementById('oled-skip-btn');
+    const replayBtn = document.getElementById('oled-replay-btn');
 
     if (titleEl) titleEl.textContent = poi.title;
     if (typeEl) typeEl.textContent = (poi.shortDescription || 'ROAD WONDER').toUpperCase();
@@ -1241,6 +1345,23 @@ class WanderingLayerApp {
     if (detourEl) detourEl.textContent = poi.detour ? poi.detour.label : '+5m Detour';
     if (extractEl) extractEl.textContent = poi.extract;
     if (detourLink) detourLink.href = `https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}`;
+
+    const isSpeaking = this.voice.isSpeaking;
+    const isAnnounced = this.narratedPoiIds.has(poi.id);
+
+    if (isSpeaking) {
+      if (speakBtn) speakBtn.style.display = 'none';
+      if (replayBtn) replayBtn.style.display = 'none';
+      if (skipBtn) skipBtn.style.display = 'inline-flex';
+    } else if (isAnnounced) {
+      if (speakBtn) speakBtn.style.display = 'none';
+      if (skipBtn) skipBtn.style.display = 'none';
+      if (replayBtn) replayBtn.style.display = 'inline-flex';
+    } else {
+      if (skipBtn) skipBtn.style.display = 'none';
+      if (replayBtn) replayBtn.style.display = 'none';
+      if (speakBtn) speakBtn.style.display = 'inline-flex';
+    }
   }
 
   openScrapbook() {
@@ -1332,7 +1453,6 @@ class WanderingLayerApp {
           lat: latitude,
           lng: longitude
         };
-        this.selectedSimOrigin = { ...this.selectedOrigin };
 
         if (locBtn) locBtn.textContent = '📍 Here';
         if (status) status.innerHTML = `<span>✓ Located: <strong>${placeName}</strong> (${latitude.toFixed(4)}, ${longitude.toFixed(4)})</span>`;
@@ -1374,32 +1494,6 @@ class WanderingLayerApp {
       }
     );
 
-    // Custom Simulation Modal Autocomplete
-    this.setupAutocompleteField(
-      document.getElementById('sim-origin-input'),
-      document.getElementById('sim-origin-suggestions'),
-      (item) => {
-        this.selectedSimOrigin = {
-          name: item.title,
-          fullName: `${item.title}, ${item.subtitle}`,
-          lat: item.lat,
-          lng: item.lng
-        };
-      }
-    );
-
-    this.setupAutocompleteField(
-      document.getElementById('sim-dest-input'),
-      document.getElementById('sim-dest-suggestions'),
-      (item) => {
-        this.selectedSimDest = {
-          name: item.title,
-          fullName: `${item.title}, ${item.subtitle}`,
-          lat: item.lat,
-          lng: item.lng
-        };
-      }
-    );
 
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.autocomplete-container')) {
@@ -1600,7 +1694,7 @@ class WanderingLayerApp {
     if (totalEl) totalEl.textContent = formatMins(totalMins);
     if (stopsEl) stopsEl.textContent = `${selectedStops.length}`;
 
-    // Update navigation transfer links
+    // Update navigation transfer links for full trip
     const gmapsLink = document.getElementById('launch-gmaps-link');
     const appleLink = document.getElementById('launch-apple-link');
 
@@ -1611,6 +1705,102 @@ class WanderingLayerApp {
     if (appleLink) {
       appleLink.href = this.routeService.generateAppleMapsUrl(route.start, route.end, selectedStops);
       appleLink.style.display = 'inline-flex';
+    }
+
+    // Evaluate Multi-Day Trip Legs and Google Maps 9-Stop Limit
+    const targetHours = Number(document.getElementById('daily-target-hours-select')?.value || 5);
+    const dailyLegs = this.routeService.splitRouteIntoDailyLegs(route, selectedStops, targetHours, this.unitSystem);
+    this.currentDailyLegs = dailyLegs;
+
+    const limitAlert = document.getElementById('route-gmaps-limit-alert');
+    const limitText = document.getElementById('route-gmaps-limit-text');
+    const legsContainer = document.getElementById('route-daily-legs-container');
+    const legsList = document.getElementById('route-daily-legs-list');
+
+    if (selectedStops.length > 9) {
+      if (limitAlert) limitAlert.style.display = 'block';
+      if (limitText) {
+        limitText.innerHTML = `You have selected <strong>${selectedStops.length} stops</strong>. Google Maps accepts up to 9 intermediate stops per link. We've auto-split your trip into <strong>${dailyLegs.length} Day Legs</strong> below so every stop opens seamlessly in Google Maps! (Or use <strong>Save Full GPX</strong> for all ${selectedStops.length} stops in one file).`;
+      }
+    } else if (totalMins >= 300) {
+      if (limitAlert) limitAlert.style.display = 'block';
+      if (limitText) {
+        limitText.innerHTML = `Long-distance road trip detected (${formatMins(totalMins)}). We've suggested a <strong>${dailyLegs.length}-Day Itinerary</strong> (~${targetHours}h drive/day) below with 1-click Google Maps links for each day!`;
+      }
+    } else {
+      if (limitAlert) limitAlert.style.display = 'none';
+    }
+
+    if (dailyLegs.length > 1) {
+      if (legsContainer) legsContainer.style.display = 'block';
+      if (legsList) {
+        legsList.innerHTML = '';
+        dailyLegs.forEach((leg, idx) => {
+          const card = document.createElement('div');
+          card.className = 'daily-leg-card';
+
+          const legDistDisplay = isImperial ? `${leg.distanceMiles} mi` : `${leg.distanceKm} km`;
+          const stopsSummary = leg.waypoints.length === 1 ? '1 stop' : `${leg.waypoints.length} stops`;
+
+          card.innerHTML = `
+            <div class="daily-leg-header">
+              <div class="daily-leg-title">
+                <span>📅 ${leg.title}</span>
+              </div>
+              <div class="daily-leg-metrics">
+                ${formatMins(leg.durationMinutes)} &bull; ${legDistDisplay} &bull; ${stopsSummary}
+              </div>
+            </div>
+            <div class="daily-leg-waypoints">
+              ${leg.waypoints.length > 0
+                ? leg.waypoints.map(wp => `<span class="daily-leg-wp-tag" title="${wp.title}">📍 ${wp.title}</span>`).join('')
+                : '<span style="font-size:0.7rem;color:var(--text-muted);">Direct highway segment (no detours)</span>'
+              }
+            </div>
+            <div class="daily-leg-actions">
+              <a href="${leg.googleMapsUrl}" target="_blank" rel="noopener noreferrer" class="daily-leg-btn gmaps">
+                🗺️ Open Day ${leg.dayNumber} in Google Maps &rarr;
+              </a>
+              <a href="${leg.appleMapsUrl}" target="_blank" rel="noopener noreferrer" class="daily-leg-btn apple">
+                🍏 Apple Maps
+              </a>
+              <button class="daily-leg-btn sim" data-leg-index="${idx}">
+                🚗 Simulate Day ${leg.dayNumber}
+              </button>
+            </div>
+          `;
+
+          const simBtn = card.querySelector('.daily-leg-btn.sim');
+          if (simBtn) {
+            simBtn.addEventListener('click', () => {
+              this.simulateRouteLeg(leg);
+            });
+          }
+
+          legsList.appendChild(card);
+        });
+      }
+    } else {
+      if (legsContainer) legsContainer.style.display = 'none';
+    }
+  }
+
+  simulateRouteLeg(leg) {
+    if (!leg || !leg.latLngs || leg.latLngs.length < 2) return;
+    const routeModal = document.getElementById('route-modal');
+    const startBtn = document.getElementById('start-btn');
+
+    this.voice.unlockAudio();
+    this.heartbeat.start();
+    this.journal.startSession();
+
+    this.gps.startSimulation(leg.latLngs);
+    this.isTracking = true;
+    if (routeModal) routeModal.classList.remove('active');
+    document.getElementById('hud-status').textContent = `Simulating Day ${leg.dayNumber}`;
+    if (startBtn) {
+      startBtn.classList.add('tracking');
+      startBtn.innerHTML = `<span>Stop Day ${leg.dayNumber} Simulation</span>`;
     }
   }
 
@@ -1690,60 +1880,33 @@ class WanderingLayerApp {
 
       this.routeService.discoverCorridorWaypoints(3500, departureDate, this.unitSystem).then(corridorPois => {
         statusEl.innerHTML = `<span>Found <strong>${corridorPois.length}</strong> roadside highlights along your journey:</span>`;
-        listEl.innerHTML = '';
+        this.rawCorridorPois = corridorPois;
         this.selectedWaypoints = [];
 
-        if (corridorPois.length === 0) {
-          listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Ready for departure. No major recorded stops along this segment.</div>';
-        } else {
-          corridorPois.forEach((poi) => {
-            const item = document.createElement('div');
-            item.className = 'corridor-item';
-            item.id = `corridor-item-${poi.id}`;
+        const hintBanner = document.getElementById('corridor-hint-banner');
+        if (hintBanner) hintBanner.style.display = 'block';
 
-            const detourBadge = `+${poi.detourMinutes}m detour`;
-            const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
-            const etaTime = poi.weather?.arrivalTimeFormatted ? `@ ${poi.weather.arrivalTimeFormatted}` : `+${poi.etaMinutes}m ETA`;
+        // Update category count pills
+        const counts = { all: corridorPois.length, nature: 0, history: 0, food: 0, gems: 0 };
+        corridorPois.forEach(p => {
+          const k = p.categoryKey || 'gems';
+          if (counts[k] !== undefined) counts[k]++;
+        });
 
-            const weatherBadge = poi.weather ? `
-              <span class="corridor-weather-chip ${poi.weather.isAdverse ? 'adverse' : ''}" title="${poi.weather.suitabilityNote || ''}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; background: ${poi.weather.isAdverse ? 'rgba(248,81,73,0.15)' : 'rgba(88,166,255,0.12)'}; color: ${poi.weather.isAdverse ? '#f85149' : '#79c0ff'}; border: 1px solid ${poi.weather.isAdverse ? 'rgba(248,81,73,0.4)' : 'rgba(88,166,255,0.3)'};">
-                <span>${poi.weather.icon}</span>
-                <span>${poi.weather.tempDisplay}</span>
-                <span style="opacity: 0.8;">&bull; ${poi.weather.condition}</span>
-                <span style="font-weight: 600; opacity: 0.95;">(${etaTime})</span>
-              </span>
-            ` : `<span style="font-size: 0.72rem; color: var(--text-muted);">⏳ +${poi.etaMinutes}m ETA</span>`;
+        const setPillCount = (id, count) => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = count;
+        };
+        setPillCount('cat-count-all', counts.all);
+        setPillCount('cat-count-nature', counts.nature);
+        setPillCount('cat-count-history', counts.history);
+        setPillCount('cat-count-food', counts.food);
+        setPillCount('cat-count-gems', counts.gems);
 
-            item.innerHTML = `
-              <input type="checkbox" id="check-${poi.id}" data-id="${poi.id}">
-              ${poi.thumbnail ? `<img src="${poi.thumbnail}" class="corridor-thumb" alt="${poi.title}">` : '<div class="corridor-thumb" style="background:#21262d;display:flex;align-items:center;justify-content:center;font-size:20px;">🧭</div>'}
-              <div class="corridor-details" style="display: flex; flex-direction: column; gap: 3px;">
-                <div class="corridor-title" style="font-weight: 600; font-size: 0.86rem; color: var(--text-main);">${poi.title}</div>
-                <div class="corridor-meta" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.72rem;">
-                  <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
-                  <span>&bull;</span>
-                  <span>${distFromHwy}</span>
-                  <span>&bull;</span>
-                  ${weatherBadge}
-                </div>
-              </div>
-            `;
+        const catBar = document.getElementById('corridor-category-bar');
+        if (catBar) catBar.style.display = 'block';
 
-            const chk = item.querySelector('input[type="checkbox"]');
-            chk.addEventListener('change', () => {
-              if (chk.checked) {
-                item.classList.add('selected');
-                this.selectedWaypoints.push(poi);
-              } else {
-                item.classList.remove('selected');
-                this.selectedWaypoints = this.selectedWaypoints.filter(w => w.id !== poi.id);
-              }
-              this.updateRouteSummary(route);
-            });
-
-            listEl.appendChild(item);
-          });
-        }
+        this.renderCorridorList();
       }).catch(err => {
         console.warn('Corridor discovery notice:', err);
         listEl.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Ready for departure.</div>';
@@ -1752,6 +1915,84 @@ class WanderingLayerApp {
       console.error('Route scan error:', err);
       statusEl.innerHTML = '<span style="color:#f85149;">Unable to calculate route. Try again.</span>';
     }
+  }
+
+  getFilteredCorridorPois() {
+    if (!this.rawCorridorPois) return [];
+    if (this.activeCorridorCategory === 'all') return this.rawCorridorPois;
+    return this.rawCorridorPois.filter(p => (p.categoryKey || this.routeService.classifyCategory(p).key) === this.activeCorridorCategory);
+  }
+
+  renderCorridorList() {
+    const listEl = document.getElementById('corridor-list');
+    if (!listEl) return;
+
+    const filtered = this.getFilteredCorridorPois();
+    listEl.innerHTML = '';
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = `<div style="color:var(--text-muted);padding:14px;text-align:center;font-size:0.85rem;">No roadside highlights in the <strong>${this.activeCorridorCategory}</strong> category along this corridor.</div>`;
+      return;
+    }
+
+    filtered.forEach((poi) => {
+      const item = document.createElement('div');
+      item.className = 'corridor-item';
+      item.id = `corridor-item-${poi.id}`;
+
+      const isChecked = this.selectedWaypoints.some(w => w.id === poi.id);
+      if (isChecked) item.classList.add('selected');
+
+      const detourBadge = `+${poi.detourMinutes}m detour`;
+      const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
+      const etaTime = poi.weather?.arrivalTimeFormatted ? `@ ${poi.weather.arrivalTimeFormatted}` : `+${poi.etaMinutes}m ETA`;
+
+      const weatherBadge = poi.weather ? `
+        <span class="corridor-weather-chip ${poi.weather.isAdverse ? 'adverse' : ''}" title="${poi.weather.suitabilityNote || ''}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; background: ${poi.weather.isAdverse ? 'rgba(248,81,73,0.15)' : 'rgba(88,166,255,0.12)'}; color: ${poi.weather.isAdverse ? '#f85149' : '#79c0ff'}; border: 1px solid ${poi.weather.isAdverse ? 'rgba(248,81,73,0.4)' : 'rgba(88,166,255,0.3)'};">
+          <span>${poi.weather.icon}</span>
+          <span>${poi.weather.tempDisplay}</span>
+          <span style="opacity: 0.8;">&bull; ${poi.weather.condition}</span>
+          <span style="font-weight: 600; opacity: 0.95;">(${etaTime})</span>
+        </span>
+      ` : `<span style="font-size: 0.72rem; color: var(--text-muted);">⏳ +${poi.etaMinutes}m ETA</span>`;
+
+      item.innerHTML = `
+        <input type="checkbox" id="check-${poi.id}" data-id="${poi.id}" ${isChecked ? 'checked' : ''}>
+        ${poi.thumbnail ? `<img src="${poi.thumbnail}" class="corridor-thumb" alt="${poi.title}">` : '<div class="corridor-thumb" style="background:#21262d;display:flex;align-items:center;justify-content:center;font-size:20px;">🧭</div>'}
+        <div class="corridor-details" style="display: flex; flex-direction: column; gap: 3px; flex: 1;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 6px;">
+            <div class="corridor-title" style="font-weight: 600; font-size: 0.86rem; color: var(--text-main);">${poi.title}</div>
+            <span class="corridor-cat-badge ${poi.categoryKey || 'gems'}">${poi.categoryIcon || '🧭'} ${poi.categoryLabel || 'Travel Gem'}</span>
+          </div>
+          <div class="corridor-meta" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.72rem;">
+            <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
+            <span>&bull;</span>
+            <span>${distFromHwy}</span>
+            <span>&bull;</span>
+            ${weatherBadge}
+          </div>
+        </div>
+      `;
+
+      const chk = item.querySelector('input[type="checkbox"]');
+      chk.addEventListener('change', () => {
+        if (chk.checked) {
+          item.classList.add('selected');
+          if (!this.selectedWaypoints.some(w => w.id === poi.id)) {
+            this.selectedWaypoints.push(poi);
+          }
+        } else {
+          item.classList.remove('selected');
+          this.selectedWaypoints = this.selectedWaypoints.filter(w => w.id !== poi.id);
+        }
+        if (this.routeService.currentRoute) {
+          this.updateRouteSummary(this.routeService.currentRoute);
+        }
+      });
+
+      listEl.appendChild(item);
+    });
+  }
   }
 
   async handleOfflinePreCache() {

@@ -60,9 +60,28 @@ export class HeartbeatService {
         ]
       });
 
-      // Handle lockscreen play/pause buttons
+      // Handle lockscreen & bluetooth steering wheel buttons
       navigator.mediaSession.setActionHandler('play', () => this.start());
-      navigator.mediaSession.setActionHandler('pause', () => this.stop());
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (window.app && typeof window.app.skipCurrentStory === 'function') {
+          window.app.skipCurrentStory();
+        }
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        if (window.app && typeof window.app.skipCurrentStory === 'function') {
+          window.app.skipCurrentStory();
+        }
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        if (window.app && typeof window.app.replayLastStory === 'function') {
+          window.app.replayLastStory();
+        }
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        if (window.app && typeof window.app.skipCurrentStory === 'function') {
+          window.app.skipCurrentStory();
+        }
+      });
     }
   }
 

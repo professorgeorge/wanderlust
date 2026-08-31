@@ -140,4 +140,18 @@ export class PinsService {
       return { success: false, error: err.message };
     }
   }
+
+  isNarrated(id) {
+    if (!id) return false;
+    return this.narratedPinIds.has(String(id));
+  }
+
+  markAsNarrated(id) {
+    if (!id) return;
+    this.narratedPinIds.add(String(id));
+  }
+
+  resetNarrated() {
+    this.narratedPinIds.clear();
+  }
 }
