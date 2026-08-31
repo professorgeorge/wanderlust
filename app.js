@@ -1480,7 +1480,7 @@ class ContextService {
         id: 'night',
         label: 'Night & Stargazing',
         icon: '🌌',
-        theme: 'indigo',
+        theme: 'slate',
         description: 'Quiet dark-sky overlooks, illuminated historic landmarks, and cool breezes.'
       };
     }
@@ -2912,6 +2912,8 @@ class RouteService {
           poi.projectionDistanceMeters = projectionDistance;
           poi.detourMinutes = detourDriveMinutes + dwellMinutes;
           poi.etaMinutes = etaMinutes;
+          poi.detourType = this.classifyDetourType(minDistance);
+          poi.sunsetMatch = this.checkSunsetMatch(poi, departureDate);
 
           allDiscovered.set(poi.id, poi);
         }
@@ -2928,6 +2930,8 @@ class RouteService {
             const fraction = Math.min(1, Math.max(0, projectionDistance / (totalDistMeters || 1)));
             const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
             const catInfo = this.classifyCategory(pin);
+            const detourType = this.classifyDetourType(minDistance);
+            const sunsetMatch = this.checkSunsetMatch({ ...pin, categoryKey: catInfo.key, etaMinutes }, departureDate);
 
             allDiscovered.set(pin.id, {
               id: pin.id,
@@ -2943,7 +2947,9 @@ class RouteService {
               distanceFromRouteMeters: Math.round(minDistance),
               projectionDistanceMeters: projectionDistance,
               detourMinutes: Math.round(((minDistance * 2.7) / 35000) * 60) + 5,
-              etaMinutes: etaMinutes
+              etaMinutes: etaMinutes,
+              detourType: detourType,
+              sunsetMatch: sunsetMatch
             });
           }
         });
@@ -3035,6 +3041,128 @@ class RouteService {
     }
 
     return samples;
+  }
+
+  /**
+   * Classify accessibility: Drive-by (0m detour) vs Quick pull-over vs Scenic detour
+   */
+  classifyDetourType(distanceMeters) {
+    if (distanceMeters <= 650) {
+      return {
+        type: 'drive_by',
+        label: '🚗 Highway Drive-By (0m Detour)',
+        shortLabel: '🚗 Highway Audible',
+        cssClass: 'badge-drive-by'
+      };
+    }
+    if (distanceMeters <= 2000) {
+      return {
+        type: 'quick_stop',
+        label: '🅿️ Quick Pull-Over (3-5m)',
+        shortLabel: '🅿️ Quick Pull-Over',
+        cssClass: 'badge-quick-stop'
+      };
+    }
+    return {
+      type: 'scenic_detour',
+      label: '🏞️ Scenic Detour (8-15m)',
+      shortLabel: '🏞️ Scenic Detour',
+      cssClass: 'badge-scenic-detour'
+    };
+  }
+
+  /**
+   * Calculate local sunset time using solar declination approximation
+   */
+  calculateSunsetTime(lat, lng, date = new Date()) {
+    try {
+      const localDate = new Date(date.getTime() + (lng / 15) * 3600 * 1000);
+      const startOfYear = new Date(Date.UTC(localDate.getUTCFullYear(), 0, 0));
+      const dayOfYear = Math.floor((localDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+      const declination = 23.45 * Math.sin((360 / 365) * (dayOfYear - 81) * (Math.PI / 180));
+      
+      const latRad = lat * (Math.PI / 180);
+      const decRad = declination * (Math.PI / 180);
+      const cosHourAngle = -Math.tan(latRad) * Math.tan(decRad);
+      
+      if (cosHourAngle > 1 || cosHourAngle < -1) return null;
+      
+      const hourAngle = Math.acos(cosHourAngle) * (180 / Math.PI);
+      const sunsetSolarUtcHours = 12 + (hourAngle / 15) - (lng / 15);
+      
+      const baseDateUtc = new Date(Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate(), 0, 0, 0));
+      const sunsetUtcMs = baseDateUtc.getTime() + (sunsetSolarUtcHours * 3600 * 1000);
+      return new Date(sunsetUtcMs);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Check if a scenic waypoint coincides with golden hour / sunset based on arrival ETA
+   */
+  checkSunsetMatch(poi, departureDate = new Date()) {
+    if (!poi || !poi.lat || !poi.lng || typeof poi.etaMinutes !== 'number') return null;
+
+    const isScenic = poi.categoryKey === 'nature' || 
+                     ['vista', 'viewpoint', 'peak', 'waterfall', 'beach', 'lake', 'canyon', 'natural'].includes((poi.type || '').toLowerCase()) ||
+                     /\b(viewpoint|lookout|overlook|scenic|vista|peak|summit|canyon|lake|ocean|beach|ridge|sunset|sunrise)\b/i.test(`${poi.title || ''} ${poi.extract || ''}`);
+
+    if (!isScenic) return null;
+
+    const arrivalTime = new Date(departureDate.getTime() + (poi.etaMinutes * 60 * 1000));
+    const sunsetTime = this.calculateSunsetTime(poi.lat, poi.lng, arrivalTime);
+    if (!sunsetTime) return null;
+
+    const diffMins = (arrivalTime.getTime() - sunsetTime.getTime()) / (60 * 1000);
+
+    // Golden Hour window: between 40 minutes before sunset and 15 minutes after sunset
+    if (diffMins >= -40 && diffMins <= 15) {
+      const timeStr = arrivalTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return {
+        isMatch: true,
+        label: `🌅 Golden Hour / Sunset Lookout (~${timeStr} ETA)`,
+        shortLabel: `🌅 Sunset Lookout (~${timeStr})`,
+        sunsetTimeStr: timeStr
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate 1-Click Shareable Trip Itinerary URL
+   */
+  generateTripShareUrl(start, end, waypoints = [], departureOffsetMins = 0) {
+    const origin = (typeof window !== 'undefined' && window.location) ? (window.location.origin + window.location.pathname) : 'https://professorgeorge.github.io/wanderlust/';
+    const params = new URLSearchParams();
+
+    if (start) {
+      params.set('origin', start.name || `${start.lat},${start.lng}`);
+      if (start.lat && start.lng) {
+        params.set('olat', Number(start.lat).toFixed(4));
+        params.set('olng', Number(start.lng).toFixed(4));
+      }
+    }
+
+    if (end) {
+      params.set('dest', end.name || `${end.lat},${end.lng}`);
+      if (end.lat && end.lng) {
+        params.set('dlat', Number(end.lat).toFixed(4));
+        params.set('dlng', Number(end.lng).toFixed(4));
+      }
+    }
+
+    if (departureOffsetMins > 0) {
+      params.set('dep', departureOffsetMins);
+    }
+
+    if (waypoints && waypoints.length > 0) {
+      const stopIds = waypoints.map(w => w.id || `${Number(w.lat).toFixed(4)},${Number(w.lng).toFixed(4)}`).join(',');
+      params.set('stops', stopIds);
+    }
+
+    return `${origin}?${params.toString()}`;
   }
 
   /**
@@ -3431,6 +3559,7 @@ class WanderingLayerApp {
     try { this.initAutocomplete(); } catch (e) { console.warn('Autocomplete init error:', e); }
     try { this.initVoiceState(); } catch (e) { console.warn('Voice state init error:', e); }
     try { this.initAutoLocation(); } catch (e) { console.warn('AutoLocation init error:', e); }
+    try { this.checkSharedUrlParams(); } catch (e) { console.warn('Shared URL params check error:', e); }
   }
 
   initServiceWorker() {
@@ -4004,6 +4133,36 @@ class WanderingLayerApp {
       }
     });
 
+    document.getElementById('route-share-link-btn')?.addEventListener('click', async () => {
+      if (!this.routeService.currentRoute) return;
+      const departureOffsetMins = Number(document.getElementById('route-departure-select')?.value || 0);
+      const originName = document.getElementById('route-origin-input').value.trim().replace(/^📍\s*/, '');
+      const destName = document.getElementById('route-dest-input').value.trim();
+
+      const shareUrl = this.routeService.generateTripShareUrl(
+        this.selectedOrigin || { name: originName, lat: this.routeService.currentRoute.start?.lat, lng: this.routeService.currentRoute.start?.lng },
+        this.selectedDest || { name: destName, lat: this.routeService.currentRoute.end?.lat, lng: this.routeService.currentRoute.end?.lng },
+        this.selectedWaypoints,
+        departureOffsetMins
+      );
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+        } else {
+          const tempInput = document.createElement('input');
+          tempInput.value = shareUrl;
+          document.body.appendChild(tempInput);
+          tempInput.select();
+          document.execCommand('copy');
+          document.body.removeChild(tempInput);
+        }
+        this.showToast('🔗 Trip share link copied to clipboard! Share with friends.');
+      } catch (e) {
+        prompt('Copy your custom road trip link:', shareUrl);
+      }
+    });
+
     document.getElementById('export-gpx-btn').addEventListener('click', () => this.exportRouteGpx());
     document.getElementById('cache-route-offline-btn').addEventListener('click', () => this.handleOfflinePreCache());
 
@@ -4558,7 +4717,7 @@ class WanderingLayerApp {
         color = '#3fb950';
         iconSymbol = '🌲';
       } else if (poi.source === 'wonder_pin') {
-        color = '#d2a8ff';
+        color = '#10b981';
         iconSymbol = '✨';
       } else if (poi.source === 'wikivoyage') {
         color = '#58a6ff';
@@ -4634,13 +4793,13 @@ class WanderingLayerApp {
         className: 'wonder-pin-marker',
         html: `
           <div style="
-            background: #8a2be2;
+            background: #059669;
             color: #fff;
             border-radius: 50%;
             width: 28px; height: 28px;
             display: flex; align-items: center; justify-content: center;
             font-size: 14px;
-            box-shadow: 0 0 12px rgba(138, 43, 226, 0.8);
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.85);
             border: 2px solid #ffffff;
             cursor: pointer;
           ">
@@ -4660,7 +4819,7 @@ class WanderingLayerApp {
       pinPopup.innerHTML = `
         <h4 style="margin-bottom: 4px; font-size: 14px; color: #1f2328; font-weight: 600;">✨ ${this.escapeHtml(pin.title)}</h4>
         <p style="font-size: 12px; margin-bottom: 8px; color: #57606a;">${this.escapeHtml(pin.note)}</p>
-        <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank" rel="noopener noreferrer" class="pin-detour-btn" style="color: #8a2be2; font-weight: bold; font-size: 12px; text-decoration: underline; display: block; padding: 4px 0;">Detour to Wonder &rarr;</a>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank" rel="noopener noreferrer" class="pin-detour-btn" style="color: #059669; font-weight: bold; font-size: 12px; text-decoration: underline; display: block; padding: 4px 0;">Detour to Wonder &rarr;</a>
       `;
 
       pinPopup.querySelector('.pin-detour-btn').addEventListener('click', (e) => {
@@ -5104,7 +5263,7 @@ class WanderingLayerApp {
         <div>
           <div class="route-score-row">
             <span style="color: var(--text-muted);">🌲 Scenic Value</span>
-            <span style="font-weight: 700; color: #d2a8ff;">${r.scenicScore}/100</span>
+            <span style="font-weight: 700; color: #34d399;">${r.scenicScore}/100</span>
           </div>
           <div class="scenic-score-bar-bg">
             <div class="scenic-score-bar-fill" style="width: ${r.scenicScore}%;"></div>
@@ -5231,6 +5390,11 @@ class WanderingLayerApp {
     if (appleLink) {
       appleLink.href = this.routeService.generateAppleMapsUrl(route.start, route.end, selectedStops);
       appleLink.style.display = 'inline-flex';
+    }
+
+    const shareBtn = document.getElementById('route-share-link-btn');
+    if (shareBtn) {
+      shareBtn.style.display = 'inline-flex';
     }
 
     // Evaluate Multi-Day Trip Legs and Google Maps 9-Stop Limit
@@ -5473,6 +5637,14 @@ class WanderingLayerApp {
       const distFromHwy = `${this.formatDistance(poi.distanceFromRouteMeters)} off route`;
       const etaTime = poi.weather?.arrivalTimeFormatted ? `@ ${poi.weather.arrivalTimeFormatted}` : `+${poi.etaMinutes}m ETA`;
 
+      const detourBadgeHtml = poi.detourType
+        ? `<span class="badge-detour-type ${poi.detourType.cssClass}">${poi.detourType.label}</span>`
+        : `<span class="badge-detour-type badge-drive-by">+${poi.detourMinutes}m detour</span>`;
+
+      const sunsetBadgeHtml = poi.sunsetMatch
+        ? `<span class="badge-sunset-match" title="Golden Hour / Sunset alignment">${poi.sunsetMatch.label}</span>`
+        : '';
+
       const weatherBadge = poi.weather ? `
         <span class="corridor-weather-chip ${poi.weather.isAdverse ? 'adverse' : ''}" title="${poi.weather.suitabilityNote || ''}" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; background: ${poi.weather.isAdverse ? 'rgba(248,81,73,0.15)' : 'rgba(88,166,255,0.12)'}; color: ${poi.weather.isAdverse ? '#f85149' : '#79c0ff'}; border: 1px solid ${poi.weather.isAdverse ? 'rgba(248,81,73,0.4)' : 'rgba(88,166,255,0.3)'};">
           <span>${poi.weather.icon}</span>
@@ -5490,8 +5662,9 @@ class WanderingLayerApp {
             <div class="corridor-title" style="font-weight: 600; font-size: 0.86rem; color: var(--text-main);">${poi.title}</div>
             <span class="corridor-cat-badge ${poi.categoryKey || 'gems'}">${poi.categoryIcon || '🧭'} ${poi.categoryLabel || 'Travel Gem'}</span>
           </div>
-          <div class="corridor-meta" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.72rem;">
-            <span style="color: var(--accent-gold); font-weight: 600;">${detourBadge}</span>
+          <div class="corridor-meta" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.72rem; margin-top: 2px;">
+            ${detourBadgeHtml}
+            ${sunsetBadgeHtml}
             <span>&bull;</span>
             <span>${distFromHwy}</span>
             <span>&bull;</span>
@@ -5575,6 +5748,80 @@ class WanderingLayerApp {
       Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  showToast(msg, durationMs = 3200) {
+    const toast = document.getElementById('app-toast');
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.style.display = 'flex';
+    toast.offsetHeight; // Force reflow for smooth transition
+    toast.classList.add('active');
+
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      toast.classList.remove('active');
+      setTimeout(() => {
+        if (!toast.classList.contains('active')) {
+          toast.style.display = 'none';
+        }
+      }, 260);
+    }, durationMs);
+  }
+
+  async checkSharedUrlParams() {
+    if (typeof window === 'undefined' || !window.location || !window.location.search) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const origin = params.get('origin');
+      const dest = params.get('dest');
+      const stopsStr = params.get('stops');
+      const depOffset = params.get('dep');
+
+      if (origin && dest) {
+        const originInput = document.getElementById('route-origin-input');
+        const destInput = document.getElementById('route-dest-input');
+        const routeModal = document.getElementById('route-modal');
+
+        if (originInput) originInput.value = origin;
+        if (destInput) destInput.value = dest;
+
+        const olat = parseFloat(params.get('olat'));
+        const olng = parseFloat(params.get('olng'));
+        if (!isNaN(olat) && !isNaN(olng)) {
+          this.selectedOrigin = { name: origin, lat: olat, lng: olng };
+        }
+
+        const dlat = parseFloat(params.get('dlat'));
+        const dlng = parseFloat(params.get('dlng'));
+        if (!isNaN(dlat) && !isNaN(dlng)) {
+          this.selectedDest = { name: dest, lat: dlat, lng: dlng };
+        }
+
+        if (depOffset) {
+          const depSel = document.getElementById('route-departure-select');
+          if (depSel) depSel.value = depOffset;
+        }
+
+        if (routeModal) routeModal.classList.add('active');
+
+        await this.handleRouteScan();
+
+        if (stopsStr && this.rawCorridorPois) {
+          const targetIds = new Set(stopsStr.split(','));
+          this.selectedWaypoints = this.rawCorridorPois.filter(p => targetIds.has(p.id));
+          this.renderCorridorList();
+          if (this.routeService.currentRoute) {
+            this.updateRouteSummary(this.routeService.currentRoute);
+          }
+          this.showToast(`✓ Loaded shared road trip (${this.selectedWaypoints.length} stops included)!`);
+        } else {
+          this.showToast('✓ Loaded shared road trip!');
+        }
+      }
+    } catch (e) {
+      console.warn('Note on loading shared trip parameters:', e);
+    }
   }
 }
 

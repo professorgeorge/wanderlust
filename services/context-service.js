@@ -60,7 +60,7 @@ export class ContextService {
         id: 'night',
         label: 'Night & Stargazing',
         icon: '🌌',
-        theme: 'indigo',
+        theme: 'slate',
         description: 'Quiet dark-sky overlooks, illuminated historic landmarks, and cool breezes.'
       };
     }

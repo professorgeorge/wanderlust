@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Wanderlust — The Map Beyond the Directions</title>
   <meta name="description" content="A zero-cost GPS audio-companion that whispers stories, viewpoints, waterfalls, and footnotes alongside Google Maps.">
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0d1117">
+  <meta name="theme-color" content="#090d16">
   
+  <!-- Premium High-Contrast Road-Trip Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+
   <!-- Leaflet Map CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <!-- App Styles -->
-  <link rel="stylesheet" href="styles.css?v=24">
+  <link rel="stylesheet" href="styles.css?v=27">
 
   <!-- Capture-Phase Click Guarantee Script -->
   <script>
@@ -51,6 +55,16 @@
         return;
       }
 
+      // 3.5. Guide & Help Button
+      const helpBtn = e.target.closest('#help-btn, #footer-help-link, .btn-open-guide');
+      if (helpBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const m = document.getElementById('help-modal');
+        if (m) m.classList.add('active');
+        return;
+      }
+
       // 4. Wonder Pin Buttons
       const dropPinBtn = e.target.closest('#drop-pin-btn, #oled-pin-btn');
       if (dropPinBtn) {
@@ -62,7 +76,7 @@
       }
 
       // 5. Close Modal Buttons
-      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-pin-btn, #cancel-pin-btn');
+      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-help-btn, #close-pin-btn, #cancel-pin-btn');
       if (closeBtn) {
         e.preventDefault();
         e.stopPropagation();
@@ -101,7 +115,7 @@
 
       <!-- Drop Wonder Pin Button -->
       <button id="drop-pin-btn" class="icon-btn" title="Drop a Wonder Pin (Roadside Secret)">
-        <span style="color: #d2a8ff;">✨</span>
+        <span style="color: #10b981;">✨</span>
         <span>Wonder Pin</span>
       </button>
 
@@ -133,6 +147,16 @@
         <span>Scrapbook</span>
       </button>
 
+
+      <!-- App User Guide & Features Button -->
+      <button id="help-btn" class="icon-btn" title="App User Guide, Features & Mobile Setup">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span>Guide</span>
+      </button>
 
       <!-- Settings Button -->
       <button id="settings-btn" class="icon-btn" title="Settings">
@@ -235,7 +259,7 @@
           <h3>Ready for Discovery</h3>
           <p style="margin-bottom: 12px; color: var(--text-muted);">Explore stories of the landscape as you drive, or craft a planned route with stops and arrival weather.</p>
           
-          <button id="feed-plan-route-btn" class="btn-plan-sidebar" style="background: linear-gradient(135deg, rgba(31, 111, 235, 0.2) 0%, rgba(121, 40, 202, 0.25) 100%); border-color: rgba(168, 85, 247, 0.5); color: #d2a8ff; padding: 12px; margin-bottom: 0;">
+          <button id="feed-plan-route-btn" class="btn-plan-sidebar" style="background: linear-gradient(135deg, rgba(5, 150, 105, 0.22) 0%, rgba(16, 185, 129, 0.15) 100%); border-color: rgba(16, 185, 129, 0.5); color: #34d399; padding: 12px; margin-bottom: 0;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="6" cy="19" r="3"></circle>
               <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"></path>
@@ -266,8 +290,8 @@
 
       <!-- Fine Print Credit & Disclaimer -->
       <footer class="app-fine-print">
-        <div class="credit-line">
-          Conceptualized &amp; Developed by <a href="https://www.linkedin.com/in/beingbabu/" target="_blank" rel="noopener noreferrer">Babu George</a>
+        <div class="credit-line" style="margin-bottom: 5px;">
+          Conceptualized &amp; Developed by <a href="https://www.linkedin.com/in/beingbabu/" target="_blank" rel="noopener noreferrer">Babu George</a> &bull; <a href="#" id="footer-help-link" style="color: var(--accent-emerald-light); font-weight: 700; text-decoration: underline;">ℹ️ User Guide &amp; App Setup</a>
         </div>
         <div class="disclaimer-line">
           <span>⚠️ <strong>Legal Disclaimer:</strong> Provided strictly for educational and cultural discovery. The creator (Babu George) and contributors assume no liability for navigation choices, road hazards, or traffic incidents. Exercise personal judgment, obey all laws, and drive safely.</span>
@@ -351,7 +375,7 @@
         <textarea id="pin-note-input" rows="3" placeholder="What makes this spot special?"></textarea>
       </div>
       <div style="display: flex; gap: 10px; margin-top: 12px;">
-        <button id="save-pin-btn" class="btn-start" style="background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%);">
+        <button id="save-pin-btn" class="btn-start" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
           Save Wonder Pin
         </button>
       </div>
@@ -514,21 +538,27 @@
 
       <!-- Action Buttons -->
       <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px;">
-        <button id="route-simulate-btn" class="btn-start" style="padding: 10px 16px; font-size: 0.85rem; width: auto; background: linear-gradient(135deg, #8a2be2 0%, #a855f7 100%); display: none;">
+        <button id="route-simulate-btn" class="btn-start" style="padding: 10px 16px; font-size: 0.85rem; width: auto; background: linear-gradient(135deg, #0f766e 0%, #059669 100%); display: none;">
           🚗 Simulate Full Drive
         </button>
         <a id="launch-gmaps-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="display: none;">
           🗺️ Google Maps &rarr;
         </a>
-        <a id="launch-apple-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="background: linear-gradient(135deg, #30363d 0%, #484f58 100%); display: none;">
+        <a id="launch-apple-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-gmaps-launch" style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-color: rgba(148, 163, 184, 0.3); display: none;">
           🍏 Apple Maps
         </a>
+        <button id="route-share-link-btn" class="icon-btn" style="background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.45); color: #34d399; font-weight: 600; padding: 10px 14px; display: none;">
+          🔗 Share Trip Link
+        </button>
         <button id="export-gpx-btn" class="btn-gpx-export" style="display: none;">
           📥 Save Full GPX
         </button>
       </div>
     </div>
   </div>
+
+  <!-- Floating Toast Notification -->
+  <div id="app-toast" class="app-toast" style="display: none;"></div>
 
 
   <!-- Road Trip Scrapbook Modal -->
@@ -725,10 +755,121 @@
     </div>
   </div>
 
+  <!-- User Guide, Feature Reference & Mobile Installation Modal -->
+  <div id="help-modal" class="modal">
+    <div class="modal-card" style="max-width: 620px;">
+      <div class="modal-header">
+        <h3 style="display: flex; align-items: center; gap: 8px;">
+          <span>🧭</span> <span>Wanderlust — Guide &amp; Installation</span>
+        </h3>
+        <button id="close-help-btn" class="close-btn">&times;</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 16px; font-size: 0.85rem; line-height: 1.55;">
+        <!-- Overview Banner -->
+        <div style="background: linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: var(--radius-sm); padding: 12px 14px;">
+          <strong style="color: var(--accent-emerald-light); font-size: 0.94rem;">✨ The Map Beyond The Directions</strong>
+          <p style="margin-top: 4px; color: var(--text-secondary);">Wanderlust is a zero-cost, privacy-first GPS audio companion that automatically whispers local stories, viewpoints, historic markers, waterfalls, and roadside bakeries alongside your drive.</p>
+        </div>
+
+        <!-- Quick Start Section -->
+        <div>
+          <h4 style="color: #ffffff; font-size: 0.95rem; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>🚀</span> <span>Quick Start</span>
+          </h4>
+          <ol style="margin-left: 20px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 6px;">
+            <li><strong>Mount your phone:</strong> Open Wanderlust in your browser or launch it from your home screen.</li>
+            <li><strong>Tap "Start Journey":</strong> Your GPS will track your location and automatically narrate roadside stories hands-free as you approach landmarks.</li>
+            <li><strong>Or Tap "Plan Route":</strong> Input origin and destination to scan highway corridor stops, inspect weather ETAs, and export directly to Google Maps or Apple Maps.</li>
+          </ol>
+        </div>
+
+        <!-- Feature & Options Breakdown -->
+        <div>
+          <h4 style="color: #ffffff; font-size: 0.95rem; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>🛠️</span> <span>All App Options &amp; Features</span>
+          </h4>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: var(--accent-emerald-light);">🗺️ Highway Corridor Trip Planner:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Calculates Fastest vs. Scenic route alternatives. Samples the entire highway corridor every 15–25 km to surface hidden gems, scenic overlooks, historic markers, and local food. Features multi-day daily leg splitting and 1-click export to Google Maps, Apple Maps, GPX files, or Shareable Trip Links.</div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: var(--accent-teal-light);">🎙️ Hands-Free Audio Narration:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Spoken text-to-speech triggers hands-free as you drive. Customize narration depth (<em>Concise Alerts</em> vs. <em>Rich Storytelling</em>) and choose between 4 persona voices (<em>The Wanderer</em>, <em>Local Folklorist</em>, <em>Naturalist &amp; Geologist</em>, <em>Highway Historian</em>) under Settings.</div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: var(--accent-gold);">✨ Custom Wonder Pins:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Tap <strong>Wonder Pin</strong> to drop a personalized roadside secret, campsite, or viewpoint note on the map. Pins are saved locally and included in your multi-device backup.</div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: #ffffff;">🚘 OLED Night Driving HUD:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Tap <strong>HUD Mode</strong> for an ultra-high-contrast dashboard with oversized speedometer, night-time solar badges, and large touch buttons for zero glare.</div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: var(--accent-amber-light);">🌅 Predictive Weather &amp; Golden Hour Sunsets:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Calculates arrival time ETAs at highway checkpoints, matching scenic overlooks with astronomical sunset times and alerting to rain, wind, or adverse weather along the route.</div>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px;">
+              <strong style="color: var(--accent-cyan);">💾 Offline Pre-Caching &amp; Universal Backup:</strong>
+              <div style="color: var(--text-secondary); margin-top: 3px;">Pre-cache route corridors into IndexedDB for remote mountain passes with zero cellular signal. Full JSON backup and restore is available under Settings.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mobile & Tablet Installation Guide -->
+        <div>
+          <h4 style="color: #ffffff; font-size: 0.95rem; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>📱</span> <span>How to Install on Mobile &amp; Tablet (PWA)</span>
+          </h4>
+          <div style="background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+            <div>
+              <strong style="color: var(--accent-emerald-light);">🍏 Apple iPhone &amp; iPad (Safari):</strong>
+              <div style="color: var(--text-secondary); margin-top: 2px;">1. Open the website in Safari.<br>2. Tap the <strong>Share button</strong> (square icon with an arrow pointing up).<br>3. Scroll down and tap <strong>"Add to Home Screen"</strong>.</div>
+            </div>
+            <div style="border-top: 1px solid var(--border); padding-top: 8px;">
+              <strong style="color: var(--accent-emerald-light);">🤖 Android Phones &amp; Tablets (Chrome / Brave / Edge):</strong>
+              <div style="color: var(--text-secondary); margin-top: 2px;">1. Open the website in Chrome or your browser.<br>2. Tap the <strong>three dots</strong> menu (top right).<br>3. Tap <strong>"Install App"</strong> or <strong>"Add to Home screen"</strong>.</div>
+            </div>
+            <div style="border-top: 1px solid var(--border); padding-top: 8px;">
+              <strong style="color: var(--accent-emerald-light);">💻 Desktop &amp; Laptop (Chrome / Edge / Brave):</strong>
+              <div style="color: var(--text-secondary); margin-top: 2px;">Click the <strong>Install</strong> icon on the right side of the address bar to install as a standalone desktop app.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Developmental Credit & Comprehensive Legal Disclaimer -->
+        <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px;">
+          <div style="font-weight: 700; color: #ffffff; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <span>💡</span> <span>Conceptualization &amp; Development</span>
+          </div>
+          <p style="color: var(--text-main); margin-bottom: 12px; font-size: 0.85rem;">
+            Conceptualized, architected, and developed by <a href="https://www.linkedin.com/in/beingbabu/" target="_blank" rel="noopener noreferrer" style="color: var(--accent-emerald-light); font-weight: 700; text-decoration: underline;">Babu George</a> as an open, serendipitous road-trip audio companion.
+          </p>
+
+          <div style="font-weight: 700; color: #f85149; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+            <span>⚖️</span> <span>Legal Disclaimer, Assumption of Risk &amp; Non-Liability Clause</span>
+          </div>
+          <div style="background: rgba(248, 81, 73, 0.08); border: 1px solid rgba(248, 81, 73, 0.3); border-radius: var(--radius-sm); padding: 12px; font-size: 0.73rem; color: var(--text-secondary); line-height: 1.45;">
+            <p style="margin-bottom: 6px;"><strong>1. Absolute "AS-IS" &amp; No Warranty:</strong> This software is provided strictly on an "AS-IS" and "AS-AVAILABLE" basis without warranties or representations of any kind, whether express, statutory, or implied, including but not limited to the implied warranties of merchantability, fitness for a particular purpose, non-infringement, or routing accuracy.</p>
+            <p style="margin-bottom: 6px;"><strong>2. Informational &amp; Recreational Purpose Only:</strong> All waypoint data, geographic coordinates, estimated arrival times, detour durations, roadside attractions, viewpoints, historical facts, and weather forecasts are dynamically aggregated from public, crowdsourced, third-party APIs (OpenStreetMap, Wikimedia Foundation, Open-Meteo, OSRM) and are subject to real-world errors, omissions, road closures, or changing conditions. This application is NOT an emergency navigation system or certified driving safety tool.</p>
+            <p style="margin-bottom: 6px;"><strong>3. Express Assumption of Risk &amp; Driver Responsibility:</strong> The vehicle operator assumes sole, total responsibility for vehicle operation, route selection, and personal safety. The driver MUST remain fully attentive to the roadway at all times, adhere to all posted speed limits and traffic regulations, respect private property boundaries, and NEVER manipulate screen controls or adjust settings while the vehicle is in motion.</p>
+            <p style="margin: 0;"><strong>4. Total Limitation of Liability &amp; Hold Harmless:</strong> To the fullest extent permitted by applicable law, in no event shall the author/creator (Babu George), developers, or project contributors be liable for any direct, indirect, incidental, punitive, special, or consequential damages, losses, personal injuries, fatalities, property damage, traffic citations, or accidents arising out of or in connection with the access, use, or inability to use this software. By accessing or running this application, you expressly agree to hold harmless and release the creators from any and all legal claims, liabilities, and causes of action.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   
   <!-- Main Application Script (ES Module) -->
-  <script type="module" src="app.js?v=24"></script>
+  <script type="module" src="app.js?v=27"></script>
 </body>
 </html>

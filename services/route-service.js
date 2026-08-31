@@ -524,6 +524,8 @@ export class RouteService {
           poi.projectionDistanceMeters = projectionDistance;
           poi.detourMinutes = detourDriveMinutes + dwellMinutes;
           poi.etaMinutes = etaMinutes;
+          poi.detourType = this.classifyDetourType(minDistance);
+          poi.sunsetMatch = this.checkSunsetMatch(poi, departureDate);
 
           allDiscovered.set(poi.id, poi);
         }
@@ -540,6 +542,8 @@ export class RouteService {
             const fraction = Math.min(1, Math.max(0, projectionDistance / (totalDistMeters || 1)));
             const etaMinutes = Math.round(fraction * (this.currentRoute.durationMinutes || 0));
             const catInfo = this.classifyCategory(pin);
+            const detourType = this.classifyDetourType(minDistance);
+            const sunsetMatch = this.checkSunsetMatch({ ...pin, categoryKey: catInfo.key, etaMinutes }, departureDate);
 
             allDiscovered.set(pin.id, {
               id: pin.id,
@@ -555,7 +559,9 @@ export class RouteService {
               distanceFromRouteMeters: Math.round(minDistance),
               projectionDistanceMeters: projectionDistance,
               detourMinutes: Math.round(((minDistance * 2.7) / 35000) * 60) + 5,
-              etaMinutes: etaMinutes
+              etaMinutes: etaMinutes,
+              detourType: detourType,
+              sunsetMatch: sunsetMatch
             });
           }
         });
@@ -647,6 +653,128 @@ export class RouteService {
     }
 
     return samples;
+  }
+
+  /**
+   * Classify accessibility: Drive-by (0m detour) vs Quick pull-over vs Scenic detour
+   */
+  classifyDetourType(distanceMeters) {
+    if (distanceMeters <= 650) {
+      return {
+        type: 'drive_by',
+        label: '🚗 Highway Drive-By (0m Detour)',
+        shortLabel: '🚗 Highway Audible',
+        cssClass: 'badge-drive-by'
+      };
+    }
+    if (distanceMeters <= 2000) {
+      return {
+        type: 'quick_stop',
+        label: '🅿️ Quick Pull-Over (3-5m)',
+        shortLabel: '🅿️ Quick Pull-Over',
+        cssClass: 'badge-quick-stop'
+      };
+    }
+    return {
+      type: 'scenic_detour',
+      label: '🏞️ Scenic Detour (8-15m)',
+      shortLabel: '🏞️ Scenic Detour',
+      cssClass: 'badge-scenic-detour'
+    };
+  }
+
+  /**
+   * Calculate local sunset time using solar declination approximation
+   */
+  calculateSunsetTime(lat, lng, date = new Date()) {
+    try {
+      const localDate = new Date(date.getTime() + (lng / 15) * 3600 * 1000);
+      const startOfYear = new Date(Date.UTC(localDate.getUTCFullYear(), 0, 0));
+      const dayOfYear = Math.floor((localDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+      const declination = 23.45 * Math.sin((360 / 365) * (dayOfYear - 81) * (Math.PI / 180));
+      
+      const latRad = lat * (Math.PI / 180);
+      const decRad = declination * (Math.PI / 180);
+      const cosHourAngle = -Math.tan(latRad) * Math.tan(decRad);
+      
+      if (cosHourAngle > 1 || cosHourAngle < -1) return null;
+      
+      const hourAngle = Math.acos(cosHourAngle) * (180 / Math.PI);
+      const sunsetSolarUtcHours = 12 + (hourAngle / 15) - (lng / 15);
+      
+      const baseDateUtc = new Date(Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate(), 0, 0, 0));
+      const sunsetUtcMs = baseDateUtc.getTime() + (sunsetSolarUtcHours * 3600 * 1000);
+      return new Date(sunsetUtcMs);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Check if a scenic waypoint coincides with golden hour / sunset based on arrival ETA
+   */
+  checkSunsetMatch(poi, departureDate = new Date()) {
+    if (!poi || !poi.lat || !poi.lng || typeof poi.etaMinutes !== 'number') return null;
+
+    const isScenic = poi.categoryKey === 'nature' || 
+                     ['vista', 'viewpoint', 'peak', 'waterfall', 'beach', 'lake', 'canyon', 'natural'].includes((poi.type || '').toLowerCase()) ||
+                     /\b(viewpoint|lookout|overlook|scenic|vista|peak|summit|canyon|lake|ocean|beach|ridge|sunset|sunrise)\b/i.test(`${poi.title || ''} ${poi.extract || ''}`);
+
+    if (!isScenic) return null;
+
+    const arrivalTime = new Date(departureDate.getTime() + (poi.etaMinutes * 60 * 1000));
+    const sunsetTime = this.calculateSunsetTime(poi.lat, poi.lng, arrivalTime);
+    if (!sunsetTime) return null;
+
+    const diffMins = (arrivalTime.getTime() - sunsetTime.getTime()) / (60 * 1000);
+
+    // Golden Hour window: between 40 minutes before sunset and 15 minutes after sunset
+    if (diffMins >= -40 && diffMins <= 15) {
+      const timeStr = arrivalTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return {
+        isMatch: true,
+        label: `🌅 Golden Hour / Sunset Lookout (~${timeStr} ETA)`,
+        shortLabel: `🌅 Sunset Lookout (~${timeStr})`,
+        sunsetTimeStr: timeStr
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate 1-Click Shareable Trip Itinerary URL
+   */
+  generateTripShareUrl(start, end, waypoints = [], departureOffsetMins = 0) {
+    const origin = (typeof window !== 'undefined' && window.location) ? (window.location.origin + window.location.pathname) : 'https://professorgeorge.github.io/wanderlust/';
+    const params = new URLSearchParams();
+
+    if (start) {
+      params.set('origin', start.name || `${start.lat},${start.lng}`);
+      if (start.lat && start.lng) {
+        params.set('olat', Number(start.lat).toFixed(4));
+        params.set('olng', Number(start.lng).toFixed(4));
+      }
+    }
+
+    if (end) {
+      params.set('dest', end.name || `${end.lat},${end.lng}`);
+      if (end.lat && end.lng) {
+        params.set('dlat', Number(end.lat).toFixed(4));
+        params.set('dlng', Number(end.lng).toFixed(4));
+      }
+    }
+
+    if (departureOffsetMins > 0) {
+      params.set('dep', departureOffsetMins);
+    }
+
+    if (waypoints && waypoints.length > 0) {
+      const stopIds = waypoints.map(w => w.id || `${Number(w.lat).toFixed(4)},${Number(w.lng).toFixed(4)}`).join(',');
+      params.set('stops', stopIds);
+    }
+
+    return `${origin}?${params.toString()}`;
   }
 
   /**
