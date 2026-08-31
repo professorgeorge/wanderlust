@@ -554,6 +554,19 @@ main {
   transition: background 0.15s ease;
 }
 
+.action-btn svg,
+.action-btn span,
+.banner-ctrl-btn svg,
+.banner-ctrl-btn span,
+.daily-leg-btn svg,
+.daily-leg-btn span,
+.btn-gmaps-launch svg,
+.btn-gmaps-launch span,
+.icon-btn svg,
+.icon-btn span {
+  pointer-events: none;
+}
+
 .btn-detour {
   background: #238636;
   color: #fff;

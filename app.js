@@ -1156,19 +1156,37 @@ class WanderingLayerApp {
       const isAnnounced = this.narratedPoiIds.has(poi.id);
       const audioBtnText = isAnnounced ? '🔁 Replay Story' : '🔊 Whisper Story';
 
-      marker.bindPopup(`
-        <div style="font-family: sans-serif; color: #161b22; max-width: 230px;">
-          <h4 style="margin-bottom: 4px; font-size: 14px; color: #1f2328;">${poi.title}</h4>
-          <p style="font-size: 12px; margin-bottom: 8px; color: #57606a;">${poi.extract.slice(0, 100)}...</p>
-          <div style="display: flex; gap: 8px; flex-direction: column; margin-top: 6px;">
-            <button onclick="window.app.replayPoi(window.app.currentPois.find(p=>p.id==='${poi.id}'))" style="background:#1f6feb;color:#fff;border:none;padding:5px 8px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;text-align:center;">
-              ${audioBtnText}
-            </button>
-            <a href="https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}" target="_blank" style="color: #0969da; font-weight: bold; font-size: 12px; text-decoration: none;">Detour in Google Maps &rarr;</a>
-          </div>
-        </div>
-      `);
+      const popupDiv = document.createElement('div');
+      popupDiv.style.fontFamily = 'sans-serif';
+      popupDiv.style.color = '#161b22';
+      popupDiv.style.maxWidth = '230px';
 
+      popupDiv.innerHTML = `
+        <h4 style="margin-bottom: 4px; font-size: 14px; color: #1f2328; font-weight: 600;">${this.escapeHtml(poi.title)}</h4>
+        <p style="font-size: 12px; margin-bottom: 8px; color: #57606a; line-height: 1.35;">${this.escapeHtml(poi.extract.slice(0, 110))}...</p>
+        <div style="display: flex; gap: 8px; flex-direction: column; margin-top: 6px;">
+          <button class="popup-audio-btn" style="background:#1f6feb;color:#fff;border:none;padding:7px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;">
+            ${audioBtnText}
+          </button>
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}" target="_blank" rel="noopener noreferrer" class="popup-detour-btn" style="background:#238636;color:#fff;text-align:center;padding:7px 10px;border-radius:6px;font-weight:600;font-size:12px;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;">
+            🗺️ Detour in Google Maps &rarr;
+          </a>
+        </div>
+      `;
+
+      popupDiv.querySelector('.popup-audio-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.replayPoi(poi);
+      });
+
+      popupDiv.querySelector('.popup-detour-link, .popup-detour-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+          window.open(`https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}`, '_blank');
+        }
+      });
+
+      marker.bindPopup(popupDiv);
       this.poiMarkers.set(poi.id, marker);
     });
   }
@@ -1200,15 +1218,38 @@ class WanderingLayerApp {
       });
 
       const m = L.marker([pin.lat, pin.lng], { icon: pinIcon }).addTo(this.map);
-      m.bindPopup(`
-        <div style="font-family: sans-serif; color: #161b22; max-width: 220px;">
-          <h4 style="margin-bottom: 4px; font-size: 14px;">✨ ${pin.title}</h4>
-          <p style="font-size: 12px; margin-bottom: 8px; color: #57606a;">${pin.note}</p>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank" style="color: #8a2be2; font-weight: bold; font-size: 12px;">Detour to Wonder &rarr;</a>
-        </div>
-      `);
+      
+      const pinPopup = document.createElement('div');
+      pinPopup.style.fontFamily = 'sans-serif';
+      pinPopup.style.color = '#161b22';
+      pinPopup.style.maxWidth = '220px';
+      pinPopup.innerHTML = `
+        <h4 style="margin-bottom: 4px; font-size: 14px; color: #1f2328; font-weight: 600;">✨ ${this.escapeHtml(pin.title)}</h4>
+        <p style="font-size: 12px; margin-bottom: 8px; color: #57606a;">${this.escapeHtml(pin.note)}</p>
+        <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank" rel="noopener noreferrer" class="pin-detour-btn" style="color: #8a2be2; font-weight: bold; font-size: 12px; text-decoration: underline; display: block; padding: 4px 0;">Detour to Wonder &rarr;</a>
+      `;
+
+      pinPopup.querySelector('.pin-detour-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+          window.open(`https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`, '_blank');
+        }
+      });
+
+      m.bindPopup(pinPopup);
       this.pinMarkers.set(pin.id, m);
     });
+  }
+
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, (m) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[m]));
   }
 
   renderFeed() {
@@ -1325,6 +1366,16 @@ class WanderingLayerApp {
       if (narrateBtn) {
         narrateBtn.addEventListener('click', () => {
           this.replayPoi(poi);
+        });
+      }
+
+      const detourBtn = card.querySelector('.btn-detour');
+      if (detourBtn) {
+        detourBtn.addEventListener('click', (e) => {
+          if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+            e.preventDefault();
+            window.open(googleMapsUrl, '_blank');
+          }
         });
       }
 
