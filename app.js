@@ -70,13 +70,14 @@ class WanderingLayerApp {
     this.activeCorridorCategory = 'all';
     this.rawCorridorPois = [];
 
-    this.initServiceWorker();
-    this.initMap();
-    this.loadInitialData();
-    this.bindEvents();
-    this.initAutocomplete();
-    this.initVoiceState();
-    this.initAutoLocation();
+    // Initialize components defensively so no single phase blocks the others
+    try { this.initServiceWorker(); } catch (e) { console.warn('SW init error:', e); }
+    try { this.bindEvents(); } catch (e) { console.error('BindEvents error:', e); }
+    try { this.initMap(); } catch (e) { console.error('Map init error:', e); }
+    try { this.loadInitialData(); } catch (e) { console.warn('Initial data load error:', e); }
+    try { this.initAutocomplete(); } catch (e) { console.warn('Autocomplete init error:', e); }
+    try { this.initVoiceState(); } catch (e) { console.warn('Voice state init error:', e); }
+    try { this.initAutoLocation(); } catch (e) { console.warn('AutoLocation init error:', e); }
   }
 
   initServiceWorker() {
@@ -134,6 +135,14 @@ class WanderingLayerApp {
   }
 
   initMap() {
+    if (typeof L === 'undefined') {
+      console.warn('Leaflet library loading... deferring map init.');
+      setTimeout(() => this.initMap(), 300);
+      return;
+    }
+    const mapEl = document.getElementById('map');
+    if (!mapEl) return;
+
     const lastKnown = this.getLastKnownLocation();
     // Default to US center or last known location
     const initialLat = lastKnown ? lastKnown.lat : (this.unitSystem === 'imperial' ? 37.7749 : 48.8566);
@@ -269,6 +278,75 @@ class WanderingLayerApp {
 
   bindEvents() {
     this.gps.onLocationUpdate = (pos) => this.handleLocationUpdate(pos);
+
+    // Global Document Event Delegation for 100% Reliable Clicks
+    document.addEventListener('click', (e) => {
+      // 1. Plan Route Buttons (Header, Feed, Sidebar)
+      const planBtn = e.target.closest('#route-btn, #sidebar-plan-route-btn, #feed-plan-route-btn, .btn-plan-route, .btn-plan-sidebar');
+      if (planBtn) {
+        e.preventDefault();
+        const routeModal = document.getElementById('route-modal');
+        if (routeModal) routeModal.classList.add('active');
+        return;
+      }
+
+      // 2. Scrapbook Modal Button
+      const scrapbookBtn = e.target.closest('#scrapbook-btn');
+      if (scrapbookBtn) {
+        e.preventDefault();
+        this.openScrapbook();
+        return;
+      }
+
+      // 3. Settings Modal Button
+      const settingsBtn = e.target.closest('#settings-btn');
+      if (settingsBtn) {
+        e.preventDefault();
+        const settingsModal = document.getElementById('settings-modal');
+        if (settingsModal) settingsModal.classList.add('active');
+        return;
+      }
+
+      // 4. Wonder Pin Modal Buttons
+      const dropPinBtn = e.target.closest('#drop-pin-btn, #oled-pin-btn');
+      if (dropPinBtn) {
+        e.preventDefault();
+        this.openWonderPinModal();
+        return;
+      }
+
+      // 5. HUD Mode Toggle Button
+      const hudBtn = e.target.closest('#hud-mode-btn');
+      if (hudBtn) {
+        e.preventDefault();
+        this.isHudMode = true;
+        const drivingHudView = document.getElementById('driving-hud-view');
+        if (drivingHudView) drivingHudView.style.display = 'flex';
+        if (this.currentPois.length > 0) this.updateOledDisplay(this.currentPois[0]);
+        return;
+      }
+
+      // 6. Close Modal Buttons
+      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-pin-btn, #cancel-pin-btn');
+      if (closeBtn) {
+        e.preventDefault();
+        const modal = closeBtn.closest('.modal');
+        if (modal) modal.classList.remove('active');
+        return;
+      }
+
+      // 7. Detour Links (Ensure mobile and PWA standalone reliability)
+      const detourLink = e.target.closest('.btn-detour, .popup-detour-btn, .pin-detour-btn, .oled-action-btn.detour');
+      if (detourLink && detourLink.tagName === 'A') {
+        const href = detourLink.getAttribute('href');
+        if (href && href !== '#' && !href.startsWith('javascript:')) {
+          if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+            e.preventDefault();
+            window.open(href, '_blank');
+          }
+        }
+      }
+    });
 
     this.voice.onStateChange = ({ isSpeaking, poi, lastPoi, wasSkipped }) => {
       const banner = document.getElementById('speaking-banner');
@@ -2120,6 +2198,18 @@ class WanderingLayerApp {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  window.app = new WanderingLayerApp();
-});
+function launchApp() {
+  if (window.app) return;
+  try {
+    window.app = new WanderingLayerApp();
+    console.log('🧭 Wanderlust App initialized successfully!');
+  } catch (err) {
+    console.error('Fatal initialization error:', err);
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', launchApp);
+} else {
+  launchApp();
+}
