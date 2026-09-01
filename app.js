@@ -3551,8 +3551,12 @@ class WanderingLayerApp {
     this.activeCorridorCategory = 'all';
     this.rawCorridorPois = [];
 
+    // PWA Install State
+    this.deferredInstallPrompt = null;
+
     // Initialize components defensively so no single phase blocks the others
     try { this.initServiceWorker(); } catch (e) { console.warn('SW init error:', e); }
+    try { this.initPwaInstallPrompt(); } catch (e) { console.warn('PWA prompt init error:', e); }
     try { this.bindEvents(); } catch (e) { console.error('BindEvents error:', e); }
     try { this.initMap(); } catch (e) { console.error('Map init error:', e); }
     try { this.loadInitialData(); } catch (e) { console.warn('Initial data load error:', e); }
@@ -3570,6 +3574,110 @@ class WanderingLayerApp {
         console.warn('Service worker registration non-fatal notice:', err);
       });
     }
+  }
+
+  initPwaInstallPrompt() {
+    const installBtn = document.getElementById('install-pwa-btn');
+    const pwaBanner = document.getElementById('pwa-install-banner');
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+    // If already running in standalone PWA app mode, hide install promotional prompts
+    if (isStandalone) {
+      if (installBtn) installBtn.style.display = 'none';
+      if (pwaBanner) pwaBanner.style.display = 'none';
+      return;
+    }
+
+    // Check if user recently dismissed the banner (within 3 days)
+    const lastDismissed = localStorage.getItem('wanderlust_pwa_dismissed');
+    const recentlyDismissed = lastDismissed && (Date.now() - parseInt(lastDismissed, 10) < 3 * 24 * 60 * 60 * 1000);
+
+    // Show header install button in standard browser window
+    if (installBtn) {
+      installBtn.style.display = 'inline-flex';
+    }
+
+    // Auto-prompt bottom banner after gentle delay for discoverability
+    if (!recentlyDismissed && pwaBanner) {
+      setTimeout(() => {
+        const stillStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        if (!stillStandalone && pwaBanner) {
+          pwaBanner.style.display = 'flex';
+        }
+      }, 1500);
+    }
+
+    // 1. Listen for Android / Chrome / Edge native beforeinstallprompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      this.deferredInstallPrompt = e;
+      if (installBtn) installBtn.style.display = 'inline-flex';
+      if (!recentlyDismissed && pwaBanner) {
+        pwaBanner.style.display = 'flex';
+      }
+    });
+
+    // 2. Track successful PWA install
+    window.addEventListener('appinstalled', () => {
+      this.deferredInstallPrompt = null;
+      if (installBtn) installBtn.style.display = 'none';
+      if (pwaBanner) pwaBanner.style.display = 'none';
+      this.showToast('✓ Wanderlust installed! You can launch it anytime from your Home Screen.');
+    });
+  }
+
+  async triggerPwaInstall() {
+    const isIos = /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase()) && !window.MSStream;
+    const pwaBanner = document.getElementById('pwa-install-banner');
+    const installBtn = document.getElementById('install-pwa-btn');
+
+    if (this.deferredInstallPrompt) {
+      // Chromium / Android / Edge native prompt flow
+      this.deferredInstallPrompt.prompt();
+      const { outcome } = await this.deferredInstallPrompt.userChoice;
+      if (outcome === 'accepted') {
+        if (pwaBanner) pwaBanner.style.display = 'none';
+        if (installBtn) installBtn.style.display = 'none';
+      }
+      this.deferredInstallPrompt = null;
+    } else if (isIos) {
+      // iPhone / iPad Safari visual guide modal
+      const iosModal = document.getElementById('ios-install-modal');
+      if (iosModal) iosModal.classList.add('active');
+    } else {
+      // Desktop browser or browser without active beforeinstallprompt
+      const helpModal = document.getElementById('help-modal');
+      if (helpModal) {
+        helpModal.classList.add('active');
+      } else {
+        alert('To install Wanderlust, tap your browser menu (⋮) and choose "Install App" or "Add to Home screen".');
+      }
+    }
+  }
+
+  dismissPwaBanner() {
+    const pwaBanner = document.getElementById('pwa-install-banner');
+    if (pwaBanner) {
+      pwaBanner.style.display = 'none';
+    }
+    try {
+      localStorage.setItem('wanderlust_pwa_dismissed', Date.now().toString());
+    } catch (e) {}
+  }
+
+  showToast(message, duration = 3500) {
+    const existing = document.querySelector('.app-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'app-toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('fade-out');
+      setTimeout(() => toast.remove(), 400);
+    }, duration);
   }
 
   async loadInitialData() {
@@ -4049,6 +4157,32 @@ class WanderingLayerApp {
     document.getElementById('export-journal-btn').addEventListener('click', () => {
       this.exportJournalMarkdown();
     });
+
+    // PWA Installation Buttons & Banners
+    const installHeaderBtn = document.getElementById('install-pwa-btn');
+    if (installHeaderBtn) {
+      installHeaderBtn.addEventListener('click', () => this.triggerPwaInstall());
+    }
+
+    const pwaBannerInstallBtn = document.getElementById('pwa-banner-install-btn');
+    if (pwaBannerInstallBtn) {
+      pwaBannerInstallBtn.addEventListener('click', () => this.triggerPwaInstall());
+    }
+
+    const pwaBannerDismissBtn = document.getElementById('pwa-banner-dismiss-btn');
+    if (pwaBannerDismissBtn) {
+      pwaBannerDismissBtn.addEventListener('click', () => this.dismissPwaBanner());
+    }
+
+    const closeIosBtn = document.getElementById('close-ios-install-btn');
+    const iosDoneBtn = document.getElementById('ios-install-done-btn');
+    const iosModal = document.getElementById('ios-install-modal');
+    if (closeIosBtn && iosModal) {
+      closeIosBtn.addEventListener('click', () => iosModal.classList.remove('active'));
+    }
+    if (iosDoneBtn && iosModal) {
+      iosDoneBtn.addEventListener('click', () => iosModal.classList.remove('active'));
+    }
 
     // Route Builder Modal
     const routeModal = document.getElementById('route-modal');

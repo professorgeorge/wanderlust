@@ -1,16 +1,49 @@
 {
-  "name": "Wanderlust",
+  "id": "./",
+  "name": "Wanderlust — The Map Beyond The Directions",
   "short_name": "Wanderlust",
-  "description": "The Map Beyond the Directions: Real-time GPS audio companion & predictive weather forecaster for road trips",
+  "description": "Real-time GPS audio companion & predictive weather forecaster for road trips",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
+  "background_color": "#090d16",
+  "theme_color": "#090d16",
+  "orientation": "any",
+  "categories": [
+    "travel",
+    "navigation",
+    "lifestyle",
+    "utilities"
+  ],
   "icons": [
     {
-      "src": "https://raw.githubusercontent.com/feathericons/feather/master/icons/compass.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml"
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

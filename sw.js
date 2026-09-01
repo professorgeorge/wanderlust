@@ -1,10 +1,15 @@
-const CACHE_NAME = 'wandering-layer-v27';
+const CACHE_NAME = 'wandering-layer-v28';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.json',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png',
+  './icons/favicon-32.png',
   './services/storage-service.js',
   './services/pins-service.js',
   './services/gps.js',
