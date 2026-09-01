@@ -234,21 +234,27 @@ export class PersonaService {
 
     const bearingPhrase = options.relativeBearing ? `${options.relativeBearing}` : 'ahead';
     
+    const distMeters = (typeof poi.dist === 'number' && !isNaN(poi.dist))
+      ? poi.dist
+      : ((typeof poi.distanceFromRouteMeters === 'number' && !isNaN(poi.distanceFromRouteMeters))
+        ? poi.distanceFromRouteMeters
+        : 1000);
+
     let distPhrase = '';
     if (options.unitSystem === 'imperial') {
-      if (poi.dist < 400) {
-        const feet = Math.round(poi.dist * 3.28084);
+      if (distMeters < 400) {
+        const feet = Math.round(distMeters * 3.28084);
         distPhrase = `${feet} feet`;
       } else {
-        const miles = (poi.dist * 0.000621371).toFixed(1);
+        const miles = (distMeters * 0.000621371).toFixed(1);
         distPhrase = `${miles} miles`;
       }
     } else {
-      const distanceKm = (poi.dist / 1000).toFixed(1);
-      distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
+      const distanceKm = (distMeters / 1000).toFixed(1);
+      distPhrase = distMeters < 1000 ? `${distMeters} meters` : `${distanceKm} kilometers`;
     }
 
-    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
+    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title || 'Roadside Discovery'}.`;
     
     // Resolve narration depth
     const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');

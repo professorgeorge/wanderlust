@@ -1129,30 +1129,29 @@ class VoiceService {
       osc1.type = 'sine';
       osc1.frequency.setValueAtTime(659.25, now);
       gain1.gain.setValueAtTime(0.001, now);
-      gain1.gain.exponentialRampToValueAtTime(0.12, now + 0.05);
-      gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+      gain1.gain.exponentialRampToValueAtTime(0.1, now + 0.04);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
       osc1.connect(gain1);
       gain1.connect(this.audioCtx.destination);
       osc1.start(now);
-      osc1.stop(now + 0.5);
+      osc1.stop(now + 0.35);
 
       // Note 2: B5 (987.77 Hz) - harmonic fifth
       const osc2 = this.audioCtx.createOscillator();
       const gain2 = this.audioCtx.createGain();
       osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(987.77, now + 0.15);
-      gain2.gain.setValueAtTime(0.001, now + 0.15);
-      gain2.gain.exponentialRampToValueAtTime(0.1, now + 0.2);
-      gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+      osc2.frequency.setValueAtTime(987.77, now + 0.1);
+      gain2.gain.setValueAtTime(0.001, now + 0.1);
+      gain2.gain.exponentialRampToValueAtTime(0.08, now + 0.14);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
       osc2.connect(gain2);
       gain2.connect(this.audioCtx.destination);
-      osc2.start(now + 0.15);
-      osc2.stop(now + 0.75);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.5);
 
-      // Wait for chime to complete before speech starts
-      await new Promise(res => setTimeout(res, 550));
+      await new Promise(res => setTimeout(res, 350));
     } catch (e) {
-      console.warn('Chime audio notice:', e);
+      // Non-blocking fallback
     }
   }
 
@@ -1194,8 +1193,6 @@ class VoiceService {
       this.stop();
     }
 
-    if (this.isSpeaking) return false;
-
     this.currentPoi = poi;
     this.unlockAudio();
     await this.playChime();
@@ -1215,21 +1212,27 @@ class VoiceService {
     } else {
       const bearingPhrase = options.relativeBearing ? `${options.relativeBearing}` : 'ahead';
       
+      const distMeters = (typeof poi.dist === 'number' && !isNaN(poi.dist))
+        ? poi.dist
+        : ((typeof poi.distanceFromRouteMeters === 'number' && !isNaN(poi.distanceFromRouteMeters))
+          ? poi.distanceFromRouteMeters
+          : 1000);
+
       let distPhrase = '';
       if (options.unitSystem === 'imperial') {
-        if (poi.dist < 400) {
-          const feet = Math.round(poi.dist * 3.28084);
+        if (distMeters < 400) {
+          const feet = Math.round(distMeters * 3.28084);
           distPhrase = `${feet} feet`;
         } else {
-          const miles = (poi.dist * 0.000621371).toFixed(1);
+          const miles = (distMeters * 0.000621371).toFixed(1);
           distPhrase = `${miles} miles`;
         }
       } else {
-        const distanceKm = (poi.dist / 1000).toFixed(1);
-        distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
+        const distanceKm = (distMeters / 1000).toFixed(1);
+        distPhrase = distMeters < 1000 ? `${distMeters} meters` : `${distanceKm} kilometers`;
       }
 
-      const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
+      const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title || 'Roadside Discovery'}.`;
       const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
       let maxSentences = 3;
       if (depth === 'comprehensive' || depth === 'full') {
@@ -1249,14 +1252,26 @@ class VoiceService {
       const utterance = new SpeechSynthesisUtterance(fullSpeech);
       this.activeUtterance = utterance; // Prevent browser GC from terminating in-flight speech
 
-      if (this.selectedVoice) {
-        utterance.voice = this.selectedVoice;
-        utterance.lang = this.selectedVoice.lang || 'en-US';
-      } else {
+      try {
+        const voices = this.synth.getVoices ? this.synth.getVoices() : [];
+        if (this.selectedVoice) {
+          utterance.voice = this.selectedVoice;
+          utterance.lang = this.selectedVoice.lang || 'en-US';
+        } else if (voices && voices.length > 0) {
+          const defaultEn = voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
+          if (defaultEn) {
+            utterance.voice = defaultEn;
+            utterance.lang = defaultEn.lang || 'en-US';
+          }
+        } else {
+          utterance.lang = 'en-US';
+        }
+      } catch (e) {
         utterance.lang = 'en-US';
       }
-      utterance.rate = Math.max(0.5, Math.min(2.0, speechRate));
-      utterance.pitch = Math.max(0.5, Math.min(2.0, speechPitch));
+
+      utterance.rate = Math.max(0.6, Math.min(1.8, Number(speechRate) || 1.0));
+      utterance.pitch = Math.max(0.6, Math.min(1.5, Number(speechPitch) || 1.0));
       utterance.volume = this.isMuted ? 0 : 1.0;
 
       const cleanup = () => {
@@ -1283,7 +1298,7 @@ class VoiceService {
               this.synth.resume();
             } catch (e) {}
           }
-        }, 7000);
+        }, 6000);
       };
 
       utterance.onend = () => {
@@ -1315,18 +1330,19 @@ class VoiceService {
       if (this.synth.paused) {
         try { this.synth.resume(); } catch (e) {}
       }
-      if (this.synth.speaking) {
-        try { this.synth.cancel(); } catch (e) {}
-      }
 
-      try {
-        this.synth.speak(utterance);
-      } catch (e) {
-        console.warn('SpeechSynthesis speak exception:', e);
-        cleanup();
-        this.isSpeaking = false;
-        resolve(false);
-      }
+      // Small async tick to prevent Chromium voice queue drop
+      setTimeout(() => {
+        try {
+          if (this.synth.paused) this.synth.resume();
+          this.synth.speak(utterance);
+        } catch (e) {
+          console.warn('SpeechSynthesis speak exception:', e);
+          cleanup();
+          this.isSpeaking = false;
+          resolve(false);
+        }
+      }, 40);
     });
   }
 
@@ -1345,15 +1361,29 @@ class VoiceService {
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
       this.activeUtterance = utterance;
-      if (this.selectedVoice) {
-        utterance.voice = this.selectedVoice;
-        utterance.lang = this.selectedVoice.lang || 'en-US';
-      } else {
+
+      try {
+        const voices = this.synth.getVoices ? this.synth.getVoices() : [];
+        if (this.selectedVoice) {
+          utterance.voice = this.selectedVoice;
+          utterance.lang = this.selectedVoice.lang || 'en-US';
+        } else if (voices && voices.length > 0) {
+          const defaultEn = voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
+          if (defaultEn) {
+            utterance.voice = defaultEn;
+            utterance.lang = defaultEn.lang || 'en-US';
+          }
+        } else {
+          utterance.lang = 'en-US';
+        }
+      } catch (e) {
         utterance.lang = 'en-US';
       }
-      utterance.rate = this.rate;
-      utterance.pitch = this.pitch;
+
+      utterance.rate = this.rate || 1.0;
+      utterance.pitch = this.pitch || 1.0;
       utterance.volume = 1.0;
+
       utterance.onend = () => {
         this.activeUtterance = null;
         resolve(true);
@@ -1362,7 +1392,16 @@ class VoiceService {
         this.activeUtterance = null;
         resolve(false);
       };
-      this.synth.speak(utterance);
+
+      setTimeout(() => {
+        try {
+          if (this.synth.paused) this.synth.resume();
+          this.synth.speak(utterance);
+        } catch (e) {
+          this.activeUtterance = null;
+          resolve(false);
+        }
+      }, 40);
     });
   }
 
@@ -2478,21 +2517,27 @@ class PersonaService {
 
     const bearingPhrase = options.relativeBearing ? `${options.relativeBearing}` : 'ahead';
     
+    const distMeters = (typeof poi.dist === 'number' && !isNaN(poi.dist))
+      ? poi.dist
+      : ((typeof poi.distanceFromRouteMeters === 'number' && !isNaN(poi.distanceFromRouteMeters))
+        ? poi.distanceFromRouteMeters
+        : 1000);
+
     let distPhrase = '';
     if (options.unitSystem === 'imperial') {
-      if (poi.dist < 400) {
-        const feet = Math.round(poi.dist * 3.28084);
+      if (distMeters < 400) {
+        const feet = Math.round(distMeters * 3.28084);
         distPhrase = `${feet} feet`;
       } else {
-        const miles = (poi.dist * 0.000621371).toFixed(1);
+        const miles = (distMeters * 0.000621371).toFixed(1);
         distPhrase = `${miles} miles`;
       }
     } else {
-      const distanceKm = (poi.dist / 1000).toFixed(1);
-      distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
+      const distanceKm = (distMeters / 1000).toFixed(1);
+      distPhrase = distMeters < 1000 ? `${distMeters} meters` : `${distanceKm} kilometers`;
     }
 
-    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
+    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title || 'Roadside Discovery'}.`;
     
     // Resolve narration depth
     const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
@@ -5364,36 +5409,6 @@ class WanderingLayerApp {
     });
   }
 
-  initVoiceState() {
-    const select = document.getElementById('voice-select');
-    if (!select) return;
-    setTimeout(() => {
-      if (typeof window === 'undefined' || !window.speechSynthesis) return;
-      const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
-      if (!voices || voices.length === 0) return;
-      select.innerHTML = '';
-      
-      const langPrefix = this.knowledgeLang || 'en';
-      const matchingVoices = voices.filter(v => v.lang && v.lang.startsWith(langPrefix));
-      const otherVoices = voices.filter(v => v.lang && !v.lang.startsWith(langPrefix));
-
-      [...matchingVoices, ...otherVoices].forEach((v) => {
-        const opt = document.createElement('option');
-        opt.value = v.name;
-        opt.textContent = `${v.name} (${v.lang})`;
-        select.appendChild(opt);
-      });
-
-      if (matchingVoices.length > 0) {
-        this.voice.selectedVoice = matchingVoices[0];
-        select.value = matchingVoices[0].name;
-      }
-
-      select.addEventListener('change', () => {
-        this.voice.selectedVoice = voices.find(v => v.name === select.value);
-      });
-    }, 400);
-  }
 
   skipCurrentStory() {
     const skipped = this.voice.skip();
