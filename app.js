@@ -548,7 +548,7 @@ class WikiService {
    * Single-roundtrip batch geosearch with extracts, descriptions & thumbnails in 1 request
    */
   async fetchWikipediaGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exchars=300&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -602,7 +602,7 @@ class WikiService {
   }
 
   async fetchWikivoyageGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exchars=300&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     try {
       const res = await fetch(url, { headers: this.getHeaders() });
@@ -1026,8 +1026,14 @@ function cleanAndSplitSentences(rawText, maxSentences = 2) {
   }
 
   // 6. Select the desired number of complete sentences
-  const count = Math.max(1, maxSentences || 2);
-  const selected = mergedSentences.slice(0, count);
+  let selected = mergedSentences;
+  if (maxSentences === 'all' || maxSentences === 'comprehensive' || (typeof maxSentences === 'number' && maxSentences >= 50)) {
+    selected = mergedSentences;
+  } else {
+    const count = Math.max(1, typeof maxSentences === 'number' ? maxSentences : 2);
+    selected = mergedSentences.slice(0, count);
+  }
+
   let result = selected.join(' ').trim();
 
   // 7. Ensure clean terminal punctuation at the very end
@@ -1212,7 +1218,16 @@ class VoiceService {
       }
 
       const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
-      const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+      const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
+      let maxSentences = 3;
+      if (depth === 'comprehensive' || depth === 'full') {
+        maxSentences = 'all';
+      } else if (depth === 'concise') {
+        maxSentences = 1;
+      } else {
+        maxSentences = options.maxSentences || 3;
+      }
+
       const rawBody = poi.extract || poi.shortDescription || '';
       const storyBody = cleanAndSplitSentences(rawBody, maxSentences);
       fullSpeech = `${intro} ${storyBody}`.replace(/\s+/g, ' ').trim();
@@ -2407,7 +2422,18 @@ class PersonaService {
     }
 
     const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
-    const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+    
+    // Resolve narration depth
+    const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
+    let maxSentences = 3;
+    if (depth === 'comprehensive' || depth === 'full') {
+      maxSentences = 'all';
+    } else if (depth === 'concise') {
+      maxSentences = 1;
+    } else {
+      maxSentences = options.maxSentences || 3;
+    }
+
     const rawBody = poi.extract || poi.shortDescription || '';
     const extract = cleanAndSplitSentences(rawBody, maxSentences);
 
@@ -4038,7 +4064,8 @@ class WanderingLayerApp {
     this.isTracking = false;
     this.currentPois = [];
     this.searchRadius = 3000; // base meters
-    this.isConcise = false;
+    this.narrationDepth = localStorage.getItem('narration_depth') || 'rich';
+    this.isConcise = (this.narrationDepth === 'concise');
     this.useForwardConeFilter = true;
     this.isHudMode = false;
     this.lastScanCoords = null;
@@ -5004,9 +5031,15 @@ class WanderingLayerApp {
       document.getElementById('cooldown-val').textContent = `${Math.round(val / 60)} mins`;
     });
 
-    document.getElementById('narration-depth').addEventListener('change', (e) => {
-      this.isConcise = (e.target.value === 'concise');
-    });
+    const depthSelect = document.getElementById('narration-depth');
+    if (depthSelect) {
+      depthSelect.value = this.narrationDepth;
+      depthSelect.addEventListener('change', (e) => {
+        this.narrationDepth = e.target.value;
+        localStorage.setItem('narration_depth', this.narrationDepth);
+        this.isConcise = (this.narrationDepth === 'concise');
+      });
+    }
 
     // Full Backup Export
     document.getElementById('export-full-backup-btn').addEventListener('click', async () => {
@@ -5019,6 +5052,7 @@ class WanderingLayerApp {
         filterOnlyWithinBudget: this.budget.filterOnlyWithinBudget,
         searchRadius: this.searchRadius,
         cooldownSeconds: this.voice.cooldownSeconds,
+        narrationDepth: this.narrationDepth,
         isConcise: this.isConcise,
         keepScreenAwake: this.wakeLock.isEnabled,
         lastKnownLocation: this.getLastKnownLocation()
@@ -5094,10 +5128,18 @@ class WanderingLayerApp {
                 const cSlider = document.getElementById('cooldown-slider');
                 if (cSlider) cSlider.value = res.settings.cooldownSeconds;
               }
-              if (typeof res.settings.isConcise === 'boolean') {
-                this.isConcise = res.settings.isConcise;
+              if (res.settings.narrationDepth) {
+                this.narrationDepth = res.settings.narrationDepth;
+                localStorage.setItem('narration_depth', this.narrationDepth);
+                this.isConcise = (this.narrationDepth === 'concise');
                 const nDepth = document.getElementById('narration-depth');
-                if (nDepth) nDepth.value = this.isConcise ? 'concise' : 'rich';
+                if (nDepth) nDepth.value = this.narrationDepth;
+              } else if (typeof res.settings.isConcise === 'boolean') {
+                this.isConcise = res.settings.isConcise;
+                this.narrationDepth = this.isConcise ? 'concise' : 'rich';
+                localStorage.setItem('narration_depth', this.narrationDepth);
+                const nDepth = document.getElementById('narration-depth');
+                if (nDepth) nDepth.value = this.narrationDepth;
               }
               if (typeof res.settings.useForwardConeFilter === 'boolean') {
                 this.useForwardConeFilter = res.settings.useForwardConeFilter;
@@ -5210,6 +5252,7 @@ class WanderingLayerApp {
     const relDir = poi.relativeBearing || this.gps.getRelativeDirection(poi.lat, poi.lng);
     this.voice.narrate(poi, {
       force: true,
+      narrationDepth: this.narrationDepth,
       isConcise: this.isConcise,
       unitSystem: this.unitSystem,
       relativeBearing: relDir,
@@ -5403,6 +5446,7 @@ class WanderingLayerApp {
       const relDir = this.gps.getRelativeDirection(candidate.lat, candidate.lng);
       this.voice.narrate(candidate, {
         force: false,
+        narrationDepth: this.narrationDepth,
         isConcise: this.isConcise,
         unitSystem: this.unitSystem,
         relativeBearing: relDir,

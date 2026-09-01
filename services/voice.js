@@ -175,7 +175,16 @@ export class VoiceService {
       }
 
       const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
-      const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+      const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
+      let maxSentences = 3;
+      if (depth === 'comprehensive' || depth === 'full') {
+        maxSentences = 'all';
+      } else if (depth === 'concise') {
+        maxSentences = 1;
+      } else {
+        maxSentences = options.maxSentences || 3;
+      }
+
       const rawBody = poi.extract || poi.shortDescription || '';
       const storyBody = cleanAndSplitSentences(rawBody, maxSentences);
       fullSpeech = `${intro} ${storyBody}`.replace(/\s+/g, ' ').trim();

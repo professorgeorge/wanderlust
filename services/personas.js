@@ -193,8 +193,14 @@ export function cleanAndSplitSentences(rawText, maxSentences = 2) {
   }
 
   // 6. Select the desired number of complete sentences
-  const count = Math.max(1, maxSentences || 2);
-  const selected = mergedSentences.slice(0, count);
+  let selected = mergedSentences;
+  if (maxSentences === 'all' || maxSentences === 'comprehensive' || (typeof maxSentences === 'number' && maxSentences >= 50)) {
+    selected = mergedSentences;
+  } else {
+    const count = Math.max(1, typeof maxSentences === 'number' ? maxSentences : 2);
+    selected = mergedSentences.slice(0, count);
+  }
+
   let result = selected.join(' ').trim();
 
   // 7. Ensure clean terminal punctuation at the very end
@@ -243,7 +249,18 @@ export class PersonaService {
     }
 
     const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
-    const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+    
+    // Resolve narration depth
+    const depth = options.narrationDepth || (options.isConcise ? 'concise' : 'rich');
+    let maxSentences = 3;
+    if (depth === 'comprehensive' || depth === 'full') {
+      maxSentences = 'all';
+    } else if (depth === 'concise') {
+      maxSentences = 1;
+    } else {
+      maxSentences = options.maxSentences || 3;
+    }
+
     const rawBody = poi.extract || poi.shortDescription || '';
     const extract = cleanAndSplitSentences(rawBody, maxSentences);
 

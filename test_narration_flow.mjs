@@ -3,6 +3,7 @@ import { WikiService } from './services/wiki-service.js';
 import { OsmService } from './services/osm-service.js';
 import { PinsService } from './services/pins-service.js';
 import { StorageService } from './services/storage-service.js';
+import { cleanAndSplitSentences, PersonaService } from './services/personas.js';
 
 // Mock SpeechSynthesis & Browser environment in Node.js
 global.window = {
@@ -102,6 +103,52 @@ async function runNarrationTests() {
     throw new Error('Unselected marker was erroneously excluded from candidate pool');
   }
   console.log('  [PASS] Unselected markers remain fully eligible for roadside audio announcements.\n');
+
+  // Test 6: Comprehensive vs Rich vs Concise Narration Depth
+  console.log('Test 6: Narration Depth Formatting (Comprehensive vs Rich vs Concise)');
+  const personas = new PersonaService('historian');
+  const longWikiArticle = {
+    title: 'Historic Covered Bridge',
+    dist: 1200,
+    extract: 'The Historic Covered Bridge was built in 1864 by master builder Capt. John F. Miller. It spans approx. 145.5 ft. across the rushing gorge. During the civil unrest in the U.S. in 1872, the crossing served as an essential supply artery. Local folklore tells of night watchmen guarding the cedar timbers against saboteurs. Today, it remains one of the best preserved wooden truss bridges in the country.'
+  };
+
+  // 6a: Comprehensive Mode (Full story, all 5 complete sentences)
+  const comprehensiveSpeech = personas.formatSpeech(longWikiArticle, {
+    narrationDepth: 'comprehensive',
+    unitSystem: 'imperial'
+  });
+  console.log('  [Comprehensive Narration Text]:\n  ' + comprehensiveSpeech.text + '\n');
+  if (!comprehensiveSpeech.text.includes('preserved wooden truss bridges in the country.')) {
+    throw new Error('Comprehensive mode truncated narrative content before end of story');
+  }
+
+  // 6b: Rich Mode (Up to 3 sentences)
+  const richSpeech = personas.formatSpeech(longWikiArticle, {
+    narrationDepth: 'rich',
+    unitSystem: 'imperial'
+  });
+  console.log('  [Rich Narration Text (3 Sentences)]:\n  ' + richSpeech.text + '\n');
+  if (!richSpeech.text.includes('essential supply artery.') || richSpeech.text.includes('wooden truss bridges')) {
+    throw new Error('Rich mode did not capture expected sentence depth');
+  }
+
+  // 6c: Concise Mode (1 brief sentence)
+  const conciseSpeech = personas.formatSpeech(longWikiArticle, {
+    narrationDepth: 'concise',
+    unitSystem: 'imperial'
+  });
+  console.log('  [Concise Narration Text (1 Sentence)]:\n  ' + conciseSpeech.text + '\n');
+  if (!conciseSpeech.text.includes('Capt. John F. Miller.') || conciseSpeech.text.includes('145.5 ft')) {
+    throw new Error('Concise mode did not isolate single leading sentence');
+  }
+
+  // 6d: Terminal punctuation & Abbreviation protection
+  const cleanSample = cleanAndSplitSentences('Built by Dr. Smith in 1912 for the U.S. Forest Service at 4.5 mi. elevation', 'comprehensive');
+  if (!cleanSample.endsWith('.') || !cleanSample.includes('Dr. Smith') || !cleanSample.includes('4.5 mi.')) {
+    throw new Error('cleanAndSplitSentences failed abbreviation or terminal punctuation check: ' + cleanSample);
+  }
+  console.log('  [PASS] Narration depth modes (Comprehensive, Rich, Concise) format and preserve story integrity perfectly.\n');
 
   console.log('=== All Narration, Deduplication & Replay/Skip Tests PASSED! ===');
 }
