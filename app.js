@@ -4536,10 +4536,8 @@ class WanderingLayerApp {
 
     this.updateContextHUD(initialLat, initialLng);
 
-    if (lastKnown) {
-      this.gps.updatePosition(lastKnown.lat, lastKnown.lng, null, 0, false);
-      this.scanLandscape(lastKnown.lat, lastKnown.lng);
-    }
+    this.gps.updatePosition(initialLat, initialLng, null, 0, false);
+    this.scanLandscape(initialLat, initialLng);
   }
 
   async initAutoLocation() {
@@ -4584,19 +4582,25 @@ class WanderingLayerApp {
           }
         }
       } catch (e) {
-        console.warn('IP geolocation notice:', e);
+        console.log('IP geolocate unavailable:', e);
       }
     }
   }
 
-  // --- Units Conversion Helpers ---
-
   formatSpeed(speedKmh) {
     if (this.unitSystem === 'imperial') {
-      const mph = Math.round(speedKmh * 0.621371);
-      return { val: mph, unit: 'mph', oledUnit: 'MPH' };
+      const mph = Math.round((speedKmh || 0) * 0.621371);
+      return {
+        val: mph,
+        unit: 'mph',
+        oledUnit: 'MPH'
+      };
     }
-    return { val: speedKmh, unit: 'km/h', oledUnit: 'KM / H' };
+    return {
+      val: Math.round(speedKmh || 0),
+      unit: 'km/h',
+      oledUnit: 'KM / H'
+    };
   }
 
   formatDistance(meters) {
@@ -4636,27 +4640,32 @@ class WanderingLayerApp {
     document.addEventListener('click', unlockAudioGlobal, { passive: true });
     document.addEventListener('touchstart', unlockAudioGlobal, { passive: true });
 
-    // Header Mute Button
+    // Header & HUD Mute Button Handling
+    const toggleMuteState = () => {
+      this.voice.unlockAudio();
+      this.voice.isMuted = !this.voice.isMuted;
+      const muteLabel = document.getElementById('mute-label');
+      const muteIcon = document.getElementById('mute-icon');
+      const muteBtnEl = document.getElementById('mute-btn');
+      if (this.voice.isMuted) {
+        if (this.voice.isSpeaking) this.voice.stop();
+        if (muteLabel) muteLabel.textContent = 'Muted';
+        if (muteIcon) muteIcon.style.opacity = '0.4';
+        if (muteBtnEl) muteBtnEl.classList.add('muted');
+        this.showToast('🔇 Audio announcements muted.');
+      } else {
+        if (muteLabel) muteLabel.textContent = 'Audio On';
+        if (muteIcon) muteIcon.style.opacity = '1';
+        if (muteBtnEl) muteBtnEl.classList.remove('muted');
+        this.showToast('🔊 Audio announcements active.');
+      }
+    };
+
     const muteBtn = document.getElementById('mute-btn');
     if (muteBtn) {
       muteBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        this.voice.unlockAudio();
-        this.voice.isMuted = !this.voice.isMuted;
-        const muteLabel = document.getElementById('mute-label');
-        const muteIcon = document.getElementById('mute-icon');
-        if (this.voice.isMuted) {
-          if (this.voice.isSpeaking) this.voice.stop();
-          if (muteLabel) muteLabel.textContent = 'Muted';
-          if (muteIcon) muteIcon.style.opacity = '0.4';
-          muteBtn.classList.add('muted');
-          this.showToast('🔇 Audio announcements muted.');
-        } else {
-          if (muteLabel) muteLabel.textContent = 'Audio On';
-          if (muteIcon) muteIcon.style.opacity = '1';
-          muteBtn.classList.remove('muted');
-          this.showToast('🔊 Audio announcements active.');
-        }
+        toggleMuteState();
       });
     }
 
@@ -4666,31 +4675,31 @@ class WanderingLayerApp {
       const planBtn = e.target.closest('#route-btn, #sidebar-plan-route-btn, #feed-plan-route-btn, .btn-plan-route, .btn-plan-sidebar');
       if (planBtn) {
         e.preventDefault();
-        const routeModal = document.getElementById('route-modal');
-        if (routeModal) routeModal.classList.add('active');
+        const modal = document.getElementById('route-modal');
+        if (modal) modal.classList.add('active');
         return;
       }
 
       // 2. Scrapbook Modal Button
-      const scrapbookBtn = e.target.closest('#scrapbook-btn');
-      if (scrapbookBtn) {
+      const sbBtn = e.target.closest('#scrapbook-btn');
+      if (sbBtn) {
         e.preventDefault();
         this.openScrapbook();
         return;
       }
 
       // 3. Settings Modal Button
-      const settingsBtn = e.target.closest('#settings-btn');
-      if (settingsBtn) {
+      const stBtn = e.target.closest('#settings-btn');
+      if (stBtn) {
         e.preventDefault();
-        const settingsModal = document.getElementById('settings-modal');
-        if (settingsModal) settingsModal.classList.add('active');
+        const modal = document.getElementById('settings-modal');
+        if (modal) modal.classList.add('active');
         return;
       }
 
       // 4. Wonder Pin Modal Buttons
-      const dropPinBtn = e.target.closest('#drop-pin-btn, #oled-pin-btn');
-      if (dropPinBtn) {
+      const pinBtn = e.target.closest('#drop-pin-btn, #oled-pin-btn');
+      if (pinBtn) {
         e.preventDefault();
         this.openWonderPinModal();
         return;
@@ -4701,16 +4710,26 @@ class WanderingLayerApp {
       if (hudBtn) {
         e.preventDefault();
         this.isHudMode = true;
-        const drivingHudView = document.getElementById('driving-hud-view');
-        if (drivingHudView) drivingHudView.style.display = 'flex';
+        const oledView = document.getElementById('driving-hud-view');
+        if (oledView) oledView.style.display = 'flex';
+        if (this.wakeLock.isEnabled) {
+          this.wakeLock.request();
+        }
         if (this.currentPois.length > 0) this.updateOledDisplay(this.currentPois[0]);
         return;
       }
 
       // 6. Close Modal Buttons
-      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-pin-btn, #cancel-pin-btn');
+      const closeBtn = e.target.closest('.close-btn, #close-route-btn, #close-scrapbook-btn, #close-settings-btn, #close-pin-btn, #cancel-pin-btn, #exit-hud-btn');
       if (closeBtn) {
         e.preventDefault();
+        if (closeBtn.id === 'exit-hud-btn') {
+          this.isHudMode = false;
+          const oledView = document.getElementById('driving-hud-view');
+          if (oledView) oledView.style.display = 'none';
+          if (!this.isTracking) this.wakeLock.release();
+          return;
+        }
         const modal = closeBtn.closest('.modal');
         if (modal) modal.classList.remove('active');
         return;
@@ -4826,72 +4845,43 @@ class WanderingLayerApp {
 
     // Live GPS Start/Stop button
     const startBtn = document.getElementById('start-journey-btn');
-    startBtn.addEventListener('click', () => {
-      this.voice.unlockAudio();
-      this.heartbeat.start();
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        this.voice.unlockAudio();
+        this.heartbeat.start();
 
-      if (!this.isTracking) {
-        this.journal.startSession();
-        if (this.wakeLock.isEnabled) {
-          this.wakeLock.request();
+        if (!this.isTracking) {
+          this.journal.startSession();
+          if (this.wakeLock.isEnabled) {
+            this.wakeLock.request();
+          }
+          const started = this.gps.startLiveTracking();
+          if (started) {
+            this.isTracking = true;
+            startBtn.classList.add('tracking');
+            startBtn.innerHTML = `<span>End Journey</span>`;
+            document.getElementById('hud-status').textContent = 'Live Tracking';
+          }
+        } else {
+          this.gps.stopLiveTracking();
+          this.gps.stopSimulation();
+          this.heartbeat.stop();
+          if (!this.isHudMode) {
+            this.wakeLock.release();
+          }
+          this.isTracking = false;
+          startBtn.classList.remove('tracking');
+          startBtn.innerHTML = `<span>Start Journey (Live GPS)</span>`;
+          document.getElementById('hud-status').textContent = 'Standby';
+
+          if (this.journal.entries.length > 0) {
+            this.openScrapbook();
+          }
         }
-        const started = this.gps.startLiveTracking();
-        if (started) {
-          this.isTracking = true;
-          startBtn.classList.add('tracking');
-          startBtn.innerHTML = `<span>End Journey</span>`;
-          document.getElementById('hud-status').textContent = 'Live Tracking';
-        }
-      } else {
-        this.gps.stopLiveTracking();
-        this.gps.stopSimulation();
-        this.heartbeat.stop();
-        if (!this.isHudMode) {
-          this.wakeLock.release();
-        }
-        this.isTracking = false;
-        startBtn.classList.remove('tracking');
-        startBtn.innerHTML = `<span>Start Journey (Live GPS)</span>`;
-        document.getElementById('hud-status').textContent = 'Standby';
+      });
+    }
 
-        if (this.journal.entries.length > 0) {
-          this.openScrapbook();
-        }
-      }
-    });
-
-    // Mute button
-    const muteBtn = document.getElementById('mute-btn');
-    muteBtn.addEventListener('click', () => {
-      const isMuted = this.voice.toggleMute();
-      document.getElementById('mute-label').textContent = isMuted ? 'Muted' : 'Audio On';
-      muteBtn.classList.toggle('active', isMuted);
-    });
-
-    // Minimal OLED Driving HUD Mode
-    const hudModeBtn = document.getElementById('hud-mode-btn');
-    const drivingHudView = document.getElementById('driving-hud-view');
-    const exitHudBtn = document.getElementById('exit-hud-btn');
-
-    hudModeBtn.addEventListener('click', () => {
-      this.isHudMode = true;
-      drivingHudView.style.display = 'flex';
-      if (this.wakeLock.isEnabled) {
-        this.wakeLock.request();
-      }
-      if (this.currentPois.length > 0) {
-        this.updateOledDisplay(this.currentPois[0]);
-      }
-    });
-
-    exitHudBtn.addEventListener('click', () => {
-      this.isHudMode = false;
-      drivingHudView.style.display = 'none';
-      if (!this.isTracking) {
-        this.wakeLock.release();
-      }
-    });
-
+    // OLED HUD Controls
     document.getElementById('oled-speak-btn')?.addEventListener('click', () => {
       if (this.activePoiForOled) {
         this.replayPoi(this.activePoiForOled);
@@ -4910,22 +4900,10 @@ class WanderingLayerApp {
       }
     });
 
-    document.getElementById('oled-pin-btn')?.addEventListener('click', () => {
-      this.openWonderPinModal();
-    });
-
-    // Wonder Pin Modal & Actions
-    const dropPinBtn = document.getElementById('drop-pin-btn');
-    const pinModal = document.getElementById('pin-modal');
-    const closePinBtn = document.getElementById('close-pin-btn');
-
-    dropPinBtn.addEventListener('click', () => this.openWonderPinModal());
-    closePinBtn.addEventListener('click', () => pinModal.classList.remove('active'));
-
-    document.getElementById('save-pin-btn').addEventListener('click', async () => {
-      const title = document.getElementById('pin-title-input').value;
-      const note = document.getElementById('pin-note-input').value;
-      const category = document.getElementById('pin-category-select').value;
+    document.getElementById('save-pin-btn')?.addEventListener('click', async () => {
+      const title = document.getElementById('pin-title-input')?.value;
+      const note = document.getElementById('pin-note-input')?.value;
+      const category = document.getElementById('pin-category-select')?.value;
       const markerPos = this.carMarker ? this.carMarker.getLatLng() : { lat: 37.7749, lng: -122.4194 };
       const pos = this.gps.currentPosition || { lat: markerPos.lat, lng: markerPos.lng };
 
@@ -4937,9 +4915,12 @@ class WanderingLayerApp {
         lng: pos.lng
       });
 
-      document.getElementById('pin-title-input').value = '';
-      document.getElementById('pin-note-input').value = '';
-      pinModal.classList.remove('active');
+      const tInput = document.getElementById('pin-title-input');
+      const nInput = document.getElementById('pin-note-input');
+      if (tInput) tInput.value = '';
+      if (nInput) nInput.value = '';
+      const pinModal = document.getElementById('pin-modal');
+      if (pinModal) pinModal.classList.remove('active');
 
       this.renderPinMarkers();
       if (this.lastScanCoords) {
@@ -4947,7 +4928,7 @@ class WanderingLayerApp {
       }
     });
 
-    document.getElementById('export-pins-geojson-btn').addEventListener('click', () => {
+    document.getElementById('export-pins-geojson-btn')?.addEventListener('click', () => {
       const geojsonStr = this.pinsService.exportToGeoJson();
       const blob = new Blob([geojsonStr], { type: 'application/geo+json;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -4960,7 +4941,7 @@ class WanderingLayerApp {
       URL.revokeObjectURL(url);
     });
 
-    document.getElementById('import-pins-file').addEventListener('change', async (e) => {
+    document.getElementById('import-pins-file')?.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
@@ -4979,60 +4960,27 @@ class WanderingLayerApp {
       reader.readAsText(file);
     });
 
-    // Scrapbook Modal
-    const scrapbookBtn = document.getElementById('scrapbook-btn');
-    const scrapbookModal = document.getElementById('scrapbook-modal');
-    const closeScrapbookBtn = document.getElementById('close-scrapbook-btn');
-    scrapbookBtn.addEventListener('click', () => this.openScrapbook());
-    closeScrapbookBtn.addEventListener('click', () => scrapbookModal.classList.remove('active'));
-
-    document.getElementById('export-journal-btn').addEventListener('click', () => {
+    document.getElementById('export-journal-btn')?.addEventListener('click', () => {
       this.exportJournalMarkdown();
     });
 
     // PWA Installation Buttons & Banners
-    const installHeaderBtn = document.getElementById('install-pwa-btn');
-    if (installHeaderBtn) {
-      installHeaderBtn.addEventListener('click', () => this.triggerPwaInstall());
-    }
-
-    const pwaBannerInstallBtn = document.getElementById('pwa-banner-install-btn');
-    if (pwaBannerInstallBtn) {
-      pwaBannerInstallBtn.addEventListener('click', () => this.triggerPwaInstall());
-    }
-
-    const pwaBannerDismissBtn = document.getElementById('pwa-banner-dismiss-btn');
-    if (pwaBannerDismissBtn) {
-      pwaBannerDismissBtn.addEventListener('click', () => this.dismissPwaBanner());
-    }
-
-    const closeIosBtn = document.getElementById('close-ios-install-btn');
-    const iosDoneBtn = document.getElementById('ios-install-done-btn');
-    const iosModal = document.getElementById('ios-install-modal');
-    if (closeIosBtn && iosModal) {
-      closeIosBtn.addEventListener('click', () => iosModal.classList.remove('active'));
-    }
-    if (iosDoneBtn && iosModal) {
-      iosDoneBtn.addEventListener('click', () => iosModal.classList.remove('active'));
-    }
-
-    // Route Builder Modal
-    const routeModal = document.getElementById('route-modal');
-    const closeRouteBtn = document.getElementById('close-route-btn');
-    const openRouteModal = () => routeModal.classList.add('active');
-
-    ['route-btn', 'sidebar-plan-route-btn', 'feed-plan-route-btn'].forEach(id => {
-      const btn = document.getElementById(id);
-      if (btn) btn.addEventListener('click', openRouteModal);
+    document.getElementById('install-pwa-btn')?.addEventListener('click', () => this.triggerPwaInstall());
+    document.getElementById('pwa-banner-install-btn')?.addEventListener('click', () => this.triggerPwaInstall());
+    document.getElementById('pwa-banner-dismiss-btn')?.addEventListener('click', () => this.dismissPwaBanner());
+    document.getElementById('close-ios-install-btn')?.addEventListener('click', () => {
+      document.getElementById('ios-install-modal')?.classList.remove('active');
+    });
+    document.getElementById('ios-install-done-btn')?.addEventListener('click', () => {
+      document.getElementById('ios-install-modal')?.classList.remove('active');
     });
 
-    closeRouteBtn.addEventListener('click', () => routeModal.classList.remove('active'));
-
-    document.getElementById('route-my-loc-btn').addEventListener('click', () => {
+    // Route Builder Actions
+    document.getElementById('route-my-loc-btn')?.addEventListener('click', () => {
       this.locateUserForRoute(document.getElementById('route-origin-input'), document.getElementById('route-my-loc-btn'), document.getElementById('route-status'));
     });
 
-    document.getElementById('route-scan-btn').addEventListener('click', () => this.handleRouteScan());
+    document.getElementById('route-scan-btn')?.addEventListener('click', () => this.handleRouteScan());
     document.getElementById('route-departure-select')?.addEventListener('change', () => {
       if (this.routeService.currentRoute) {
         this.handleRouteScan();
