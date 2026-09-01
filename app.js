@@ -548,7 +548,7 @@ class WikiService {
    * Single-roundtrip batch geosearch with extracts, descriptions & thumbnails in 1 request
    */
   async fetchWikipediaGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exlimit=max&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -602,7 +602,7 @@ class WikiService {
   }
 
   async fetchWikivoyageGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exlimit=max&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     try {
       const res = await fetch(url, { headers: this.getHeaders() });
@@ -5359,10 +5359,12 @@ class WanderingLayerApp {
   async scanLandscape(lat, lng) {
     document.getElementById('hud-status').textContent = 'Scanning landscape...';
 
-    const [wikiPois, osmPois] = await Promise.all([
-      this.wiki.findNearby(lat, lng, this.searchRadius),
-      this.osm.findNearby(lat, lng, this.searchRadius)
-    ]);
+    // 1. Fast-path: Fetch Wikipedia immediately (< 200ms)
+    const wikiPromise = this.wiki.findNearby(lat, lng, this.searchRadius).catch(() => []);
+    const osmPromise = Promise.race([
+      this.osm.findNearby(lat, lng, this.searchRadius),
+      new Promise(res => setTimeout(() => res([]), 1400))
+    ]).catch(() => []);
 
     const customPins = this.pinsService.pins.map(p => this.pinsService.toPoi(p));
     const nearbyPins = customPins.filter(p => {
@@ -5376,11 +5378,10 @@ class WanderingLayerApp {
       return p;
     }).filter(p => p.dist <= Math.max(this.searchRadius, 4000));
 
-    document.getElementById('hud-status').textContent = this.gps.isSimulating ? 'Simulating Drive' : 'Scanning';
-
-    // Deduplicate merged POIs by unique ID and classify category
+    // Await Wikipedia first for instant UI population
+    const wikiPois = await wikiPromise;
     const mergedMap = new Map();
-    [...nearbyPins, ...corridorList, ...wikiPois, ...osmPois].forEach(p => {
+    [...nearbyPins, ...corridorList, ...wikiPois].forEach(p => {
       if (p && p.id && !mergedMap.has(p.id)) {
         if (!p.categoryKey) {
           const cat = this.routeService.classifyCategory(p);
@@ -5391,14 +5392,38 @@ class WanderingLayerApp {
         mergedMap.set(p.id, p);
       }
     });
-    const merged = Array.from(mergedMap.values());
-    this.currentPois = merged;
 
-    merged.forEach(poi => this.journal.logEncounter(poi, false));
+    this.currentPois = Array.from(mergedMap.values());
+    this.currentPois.forEach(poi => this.journal.logEncounter(poi, false));
+
+    document.getElementById('hud-status').textContent = this.gps.isSimulating ? 'Simulating Drive' : 'Scanning';
 
     this.renderMarkers();
     this.renderFeed();
-    this.evaluateAutomaticNarration(merged);
+    this.evaluateAutomaticNarration(this.currentPois);
+
+    // Asynchronously merge OSM results when ready without holding up UI
+    osmPromise.then(osmPois => {
+      if (osmPois && osmPois.length > 0) {
+        let added = false;
+        osmPois.forEach(p => {
+          if (p && p.id && !mergedMap.has(p.id)) {
+            const cat = this.routeService.classifyCategory(p);
+            p.categoryKey = cat.key;
+            p.categoryLabel = cat.label;
+            p.categoryIcon = cat.icon;
+            mergedMap.set(p.id, p);
+            added = true;
+          }
+        });
+        if (added) {
+          this.currentPois = Array.from(mergedMap.values());
+          this.currentPois.forEach(poi => this.journal.logEncounter(poi, false));
+          this.renderMarkers();
+          this.renderFeed();
+        }
+      }
+    });
   }
 
   updatePoiBearings(carLat, carLng) {

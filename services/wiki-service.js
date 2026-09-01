@@ -111,7 +111,7 @@ export class WikiService {
    * Single-roundtrip batch geosearch with extracts, descriptions & thumbnails in 1 request
    */
   async fetchWikipediaGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exlimit=max&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -165,7 +165,7 @@ export class WikiService {
   }
 
   async fetchWikivoyageGeo(lat, lng, radius, limit, filterNarrated = false) {
-    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
+    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exlimit=max&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     try {
       const res = await fetch(url, { headers: this.getHeaders() });
