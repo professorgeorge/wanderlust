@@ -30,15 +30,21 @@ export class VoiceService {
   initVoices() {
     if (!this.synth) return;
     const loadVoices = () => {
-      const voices = this.synth.getVoices();
-      this.selectedVoice = voices.find(v => (v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel') || v.name.includes('Premium')))) ||
-        voices.find(v => v.lang.startsWith('en')) ||
-        voices[0] || null;
+      try {
+        const voices = this.synth.getVoices();
+        if (!voices || voices.length === 0) return;
+        this.selectedVoice = voices.find(v => (v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel') || v.name.includes('Premium')))) ||
+          voices.find(v => v.lang.startsWith('en')) ||
+          voices[0] || null;
+      } catch (e) {}
     };
 
     loadVoices();
     if (this.synth.onvoiceschanged !== undefined) {
       this.synth.onvoiceschanged = loadVoices;
+    }
+    if (typeof this.synth.addEventListener === 'function') {
+      this.synth.addEventListener('voiceschanged', loadVoices);
     }
   }
 
@@ -49,11 +55,15 @@ export class VoiceService {
     if (!this.audioCtx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (AudioContext) {
-        this.audioCtx = new AudioContext();
+        try {
+          this.audioCtx = new AudioContext();
+        } catch (e) {}
       }
     }
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      try {
+        this.audioCtx.resume();
+      } catch (e) {}
     }
   }
 
@@ -61,8 +71,10 @@ export class VoiceService {
    * Play a gentle harmonic 2-tone chime before narration
    */
   async playChime() {
-    if (this.isMuted || !this.audioCtx) return;
+    if (this.isMuted) return;
     try {
+      this.unlockAudio();
+      if (!this.audioCtx) return;
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
@@ -97,7 +109,7 @@ export class VoiceService {
       // Wait for chime to complete before speech starts
       await new Promise(res => setTimeout(res, 550));
     } catch (e) {
-      console.warn('Chime audio error:', e);
+      console.warn('Chime audio notice:', e);
     }
   }
 
@@ -194,9 +206,15 @@ export class VoiceService {
       const utterance = new SpeechSynthesisUtterance(fullSpeech);
       this.activeUtterance = utterance; // Prevent browser GC from terminating in-flight speech
 
-      if (this.selectedVoice) utterance.voice = this.selectedVoice;
-      utterance.rate = speechRate;
-      utterance.pitch = speechPitch;
+      if (this.selectedVoice) {
+        utterance.voice = this.selectedVoice;
+        utterance.lang = this.selectedVoice.lang || 'en-US';
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = Math.max(0.5, Math.min(2.0, speechRate));
+      utterance.pitch = Math.max(0.5, Math.min(2.0, speechPitch));
+      utterance.volume = this.isMuted ? 0 : 1.0;
 
       const cleanup = () => {
         if (this.speechHeartbeatTimer) {
@@ -217,10 +235,12 @@ export class VoiceService {
         // Mobile speech keepalive safety
         this.speechHeartbeatTimer = setInterval(() => {
           if (this.synth && this.synth.speaking && !this.synth.paused) {
-            // Keep speech alive without disruptive stutter
-            this.synth.resume();
+            try {
+              this.synth.pause();
+              this.synth.resume();
+            } catch (e) {}
           }
-        }, 8000);
+        }, 7000);
       };
 
       utterance.onend = () => {
@@ -248,6 +268,57 @@ export class VoiceService {
         resolve(false);
       };
 
+      // Un-stick any paused synthesis engine
+      if (this.synth.paused) {
+        try { this.synth.resume(); } catch (e) {}
+      }
+      if (this.synth.speaking) {
+        try { this.synth.cancel(); } catch (e) {}
+      }
+
+      try {
+        this.synth.speak(utterance);
+      } catch (e) {
+        console.warn('SpeechSynthesis speak exception:', e);
+        cleanup();
+        this.isSpeaking = false;
+        resolve(false);
+      }
+    });
+  }
+
+  /**
+   * Test companion voice immediately on demand
+   */
+  async testSpeech(text = 'Look beyond the road: about 1 mile ahead, stands your roadside companion. Audio announcements are active and ready.') {
+    this.unlockAudio();
+    if (this.synth) {
+      try {
+        if (this.synth.paused) this.synth.resume();
+        this.synth.cancel();
+      } catch (e) {}
+    }
+    await this.playChime();
+    return new Promise((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      this.activeUtterance = utterance;
+      if (this.selectedVoice) {
+        utterance.voice = this.selectedVoice;
+        utterance.lang = this.selectedVoice.lang || 'en-US';
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = this.rate;
+      utterance.pitch = this.pitch;
+      utterance.volume = 1.0;
+      utterance.onend = () => {
+        this.activeUtterance = null;
+        resolve(true);
+      };
+      utterance.onerror = () => {
+        this.activeUtterance = null;
+        resolve(false);
+      };
       this.synth.speak(utterance);
     });
   }

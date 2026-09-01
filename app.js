@@ -1073,15 +1073,21 @@ class VoiceService {
   initVoices() {
     if (!this.synth) return;
     const loadVoices = () => {
-      const voices = this.synth.getVoices();
-      this.selectedVoice = voices.find(v => (v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel') || v.name.includes('Premium')))) ||
-        voices.find(v => v.lang.startsWith('en')) ||
-        voices[0] || null;
+      try {
+        const voices = this.synth.getVoices();
+        if (!voices || voices.length === 0) return;
+        this.selectedVoice = voices.find(v => (v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel') || v.name.includes('Premium')))) ||
+          voices.find(v => v.lang.startsWith('en')) ||
+          voices[0] || null;
+      } catch (e) {}
     };
 
     loadVoices();
     if (this.synth.onvoiceschanged !== undefined) {
       this.synth.onvoiceschanged = loadVoices;
+    }
+    if (typeof this.synth.addEventListener === 'function') {
+      this.synth.addEventListener('voiceschanged', loadVoices);
     }
   }
 
@@ -1092,11 +1098,15 @@ class VoiceService {
     if (!this.audioCtx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (AudioContext) {
-        this.audioCtx = new AudioContext();
+        try {
+          this.audioCtx = new AudioContext();
+        } catch (e) {}
       }
     }
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      try {
+        this.audioCtx.resume();
+      } catch (e) {}
     }
   }
 
@@ -1104,8 +1114,10 @@ class VoiceService {
    * Play a gentle harmonic 2-tone chime before narration
    */
   async playChime() {
-    if (this.isMuted || !this.audioCtx) return;
+    if (this.isMuted) return;
     try {
+      this.unlockAudio();
+      if (!this.audioCtx) return;
       if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
@@ -1140,7 +1152,7 @@ class VoiceService {
       // Wait for chime to complete before speech starts
       await new Promise(res => setTimeout(res, 550));
     } catch (e) {
-      console.warn('Chime audio error:', e);
+      console.warn('Chime audio notice:', e);
     }
   }
 
@@ -1237,9 +1249,15 @@ class VoiceService {
       const utterance = new SpeechSynthesisUtterance(fullSpeech);
       this.activeUtterance = utterance; // Prevent browser GC from terminating in-flight speech
 
-      if (this.selectedVoice) utterance.voice = this.selectedVoice;
-      utterance.rate = speechRate;
-      utterance.pitch = speechPitch;
+      if (this.selectedVoice) {
+        utterance.voice = this.selectedVoice;
+        utterance.lang = this.selectedVoice.lang || 'en-US';
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = Math.max(0.5, Math.min(2.0, speechRate));
+      utterance.pitch = Math.max(0.5, Math.min(2.0, speechPitch));
+      utterance.volume = this.isMuted ? 0 : 1.0;
 
       const cleanup = () => {
         if (this.speechHeartbeatTimer) {
@@ -1260,10 +1278,12 @@ class VoiceService {
         // Mobile speech keepalive safety
         this.speechHeartbeatTimer = setInterval(() => {
           if (this.synth && this.synth.speaking && !this.synth.paused) {
-            // Keep speech alive without disruptive stutter
-            this.synth.resume();
+            try {
+              this.synth.pause();
+              this.synth.resume();
+            } catch (e) {}
           }
-        }, 8000);
+        }, 7000);
       };
 
       utterance.onend = () => {
@@ -1291,6 +1311,57 @@ class VoiceService {
         resolve(false);
       };
 
+      // Un-stick any paused synthesis engine
+      if (this.synth.paused) {
+        try { this.synth.resume(); } catch (e) {}
+      }
+      if (this.synth.speaking) {
+        try { this.synth.cancel(); } catch (e) {}
+      }
+
+      try {
+        this.synth.speak(utterance);
+      } catch (e) {
+        console.warn('SpeechSynthesis speak exception:', e);
+        cleanup();
+        this.isSpeaking = false;
+        resolve(false);
+      }
+    });
+  }
+
+  /**
+   * Test companion voice immediately on demand
+   */
+  async testSpeech(text = 'Look beyond the road: about 1 mile ahead, stands your roadside companion. Audio announcements are active and ready.') {
+    this.unlockAudio();
+    if (this.synth) {
+      try {
+        if (this.synth.paused) this.synth.resume();
+        this.synth.cancel();
+      } catch (e) {}
+    }
+    await this.playChime();
+    return new Promise((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      this.activeUtterance = utterance;
+      if (this.selectedVoice) {
+        utterance.voice = this.selectedVoice;
+        utterance.lang = this.selectedVoice.lang || 'en-US';
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = this.rate;
+      utterance.pitch = this.pitch;
+      utterance.volume = 1.0;
+      utterance.onend = () => {
+        this.activeUtterance = null;
+        resolve(true);
+      };
+      utterance.onerror = () => {
+        this.activeUtterance = null;
+        resolve(false);
+      };
       this.synth.speak(utterance);
     });
   }
@@ -4140,6 +4211,81 @@ class WanderingLayerApp {
     }
   }
 
+  initVoiceState() {
+    this.initVoiceSelect();
+  }
+
+  initVoiceSelect() {
+    const voiceSelect = document.getElementById('voice-select');
+    if (!voiceSelect || !this.voice.synth) return;
+
+    const populateVoices = () => {
+      try {
+        const voices = this.voice.synth.getVoices();
+        if (!voices || voices.length === 0) return;
+
+        voiceSelect.innerHTML = '';
+        const englishVoices = voices.filter(v => v.lang.startsWith('en'));
+        const listToUse = englishVoices.length > 0 ? englishVoices : voices;
+
+        listToUse.forEach((v) => {
+          const option = document.createElement('option');
+          option.value = v.name;
+          option.textContent = `${v.name} (${v.lang})${v.default ? ' — System Default' : ''}`;
+          if (this.voice.selectedVoice && this.voice.selectedVoice.name === v.name) {
+            option.selected = true;
+          }
+          voiceSelect.appendChild(option);
+        });
+
+        // Restore saved voice if stored in localStorage
+        const savedVoiceName = localStorage.getItem('selected_voice_name');
+        if (savedVoiceName) {
+          const found = voices.find(v => v.name === savedVoiceName);
+          if (found) {
+            this.voice.selectedVoice = found;
+            voiceSelect.value = savedVoiceName;
+          }
+        }
+      } catch (e) {}
+    };
+
+    populateVoices();
+    if (this.voice.synth.onvoiceschanged !== undefined) {
+      this.voice.synth.onvoiceschanged = () => {
+        this.voice.initVoices();
+        populateVoices();
+      };
+    }
+    if (typeof this.voice.synth.addEventListener === 'function') {
+      this.voice.synth.addEventListener('voiceschanged', () => {
+        this.voice.initVoices();
+        populateVoices();
+      });
+    }
+
+    voiceSelect.addEventListener('change', (e) => {
+      const voices = this.voice.synth.getVoices();
+      const chosen = voices.find(v => v.name === e.target.value);
+      if (chosen) {
+        this.voice.selectedVoice = chosen;
+        localStorage.setItem('selected_voice_name', chosen.name);
+      }
+    });
+
+    const testBtn = document.getElementById('btn-test-voice');
+    if (testBtn) {
+      testBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        testBtn.disabled = true;
+        testBtn.textContent = '⏳ Speaking...';
+        await this.voice.testSpeech('Roadside companion audio is active and ready. Enjoy your journey.');
+        testBtn.disabled = false;
+        testBtn.textContent = '🔊 Test Voice';
+      });
+    }
+  }
+
   initPwaInstallPrompt() {
     const installBtn = document.getElementById('install-pwa-btn');
     const pwaBanner = document.getElementById('pwa-install-banner');
@@ -4437,6 +4583,37 @@ class WanderingLayerApp {
 
   bindEvents() {
     this.gps.onLocationUpdate = (pos) => this.handleLocationUpdate(pos);
+
+    // Global User-Gesture Unlock for Web Audio & SpeechSynthesis
+    const unlockAudioGlobal = () => {
+      if (this.voice) this.voice.unlockAudio();
+    };
+    document.addEventListener('click', unlockAudioGlobal, { passive: true });
+    document.addEventListener('touchstart', unlockAudioGlobal, { passive: true });
+
+    // Header Mute Button
+    const muteBtn = document.getElementById('mute-btn');
+    if (muteBtn) {
+      muteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.voice.unlockAudio();
+        this.voice.isMuted = !this.voice.isMuted;
+        const muteLabel = document.getElementById('mute-label');
+        const muteIcon = document.getElementById('mute-icon');
+        if (this.voice.isMuted) {
+          if (this.voice.isSpeaking) this.voice.stop();
+          if (muteLabel) muteLabel.textContent = 'Muted';
+          if (muteIcon) muteIcon.style.opacity = '0.4';
+          muteBtn.classList.add('muted');
+          this.showToast('🔇 Audio announcements muted.');
+        } else {
+          if (muteLabel) muteLabel.textContent = 'Audio On';
+          if (muteIcon) muteIcon.style.opacity = '1';
+          muteBtn.classList.remove('muted');
+          this.showToast('🔊 Audio announcements active.');
+        }
+      });
+    }
 
     // Global Document Event Delegation for 100% Reliable Clicks
     document.addEventListener('click', (e) => {
@@ -5456,8 +5633,8 @@ class WanderingLayerApp {
       candidates = candidates.filter(p => (p.categoryKey || this.routeService.classifyCategory(p).key) === this.activeFeedCategory);
     }
 
-    // Filter to approach distance (up to 2500m)
-    candidates = candidates.filter(p => p.dist <= Math.min(this.searchRadius, 2500));
+    // Filter to approach distance (up to 3500m)
+    candidates = candidates.filter(p => p.dist <= Math.min(this.searchRadius, 3500));
 
     if (this.useForwardConeFilter && this.gps.speed > 15) {
       candidates = candidates.filter(p => this.gps.isInForwardCone(p.lat, p.lng));
