@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wandering-layer-v28';
+const CACHE_NAME = 'wandering-layer-v30';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -23,6 +23,7 @@ const ASSETS_TO_CACHE = [
   './services/context-service.js',
   './services/personas.js',
   './services/heartbeat.js',
+  './services/wake-lock.js',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];

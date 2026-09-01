@@ -82,6 +82,129 @@ export const PERSONAS = {
   }
 };
 
+/**
+ * Robust natural language sentence segmenter & text cleaner.
+ * Properly handles honorifics, titles, abbreviations, decimal numbers,
+ * initials, citation brackets, and units without cutting off mid-sentence.
+ *
+ * @param {string} rawText - Input raw text or POI extract
+ * @param {number} maxSentences - Target number of complete sentences (e.g. 1 for concise, 2-3 for rich)
+ * @returns {string} Fully formed, complete sentence(s) with proper punctuation.
+ */
+export function cleanAndSplitSentences(rawText, maxSentences = 2) {
+  if (!rawText || typeof rawText !== 'string') return '';
+
+  // 1. Clean Wikipedia citations like [1], [2], [citation needed], [note 1], etc.
+  let text = rawText
+    .replace(/\[\s*(?:\d+|citation needed|note \d+|edit)\s*\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!text) return '';
+
+  // 2. Protect common abbreviations from erroneous sentence breaks
+  const abbreviations = [
+    // Honorifics / Titles
+    'Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'Sr', 'Jr', 'Gen', 'Gov', 'Sen', 'Rep', 'Capt', 'Lt', 'Col', 'Maj', 'Rev', 'Fr', 'St', 'Mt', 'Ft',
+    // Geographic / Measurement / Infrastructure
+    'Rd', 'Ave', 'Blvd', 'Hwy', 'Ln', 'Ct', 'Pl', 'Sq', 'sq', 'mi', 'km', 'ft', 'in', 'm', 'ac', 'yd', 'oz', 'lb', 'lbs', 'dept',
+    // Latin / Dates / Common abbreviations
+    'c', 'ca', 'approx', 'est', 'e.g', 'i.e', 'vs', 'etc', 'viz', 'al', 'op', 'cit', 'a.m', 'p.m', 'am', 'pm', 'no', 'vol', 'p', 'pp', 'co', 'inc', 'corp', 'ltd',
+    // States & Regions
+    'U.S', 'U.S.A', 'U.K', 'E.U', 'N.Y', 'C.A', 'D.C', 'Fla', 'Tex', 'Wash', 'Calif'
+  ];
+
+  const protectedTokens = new Map();
+  let tokenIdx = 0;
+
+  // Protect decimal numbers (e.g. 3.5 miles, 14.2 km)
+  text = text.replace(/(\b\d+)\.(\d+\b)/g, (match, p1, p2) => {
+    const token = `__DECIMAL_${tokenIdx++}__`;
+    protectedTokens.set(token, `${p1}.${p2}`);
+    return token;
+  });
+
+  // Protect single initial letters with period (e.g. John F. Kennedy)
+  text = text.replace(/(^|\s)([A-Z])\.(\s|$)/g, (match, before, letter, after) => {
+    const token = `__INIT_${tokenIdx++}__`;
+    protectedTokens.set(token, `${letter}.`);
+    return `${before}${token}${after}`;
+  });
+
+  // Protect multi-dot abbreviations (e.g. U.S.A., e.g., i.e., a.m., p.m.)
+  text = text.replace(/\b([a-zA-Z])\.([a-zA-Z])\.([a-zA-Z])?\./gi, (match) => {
+    const token = `__ABBR_${tokenIdx++}__`;
+    protectedTokens.set(token, match);
+    return token;
+  });
+  text = text.replace(/\b([a-zA-Z])\.([a-zA-Z])\./gi, (match) => {
+    const token = `__ABBR_${tokenIdx++}__`;
+    protectedTokens.set(token, match);
+    return token;
+  });
+
+  // Protect single-dot known abbreviations
+  abbreviations.forEach(abbr => {
+    const regex = new RegExp(`\\b(${abbr})\\.(\\s+|$)`, 'gi');
+    text = text.replace(regex, (match, p1, space) => {
+      const token = `__ABBR_${tokenIdx++}__`;
+      protectedTokens.set(token, `${p1}.`);
+      return `${token}${space}`;
+    });
+  });
+
+  // 3. Sentence segmentation
+  let sentences = [];
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    try {
+      const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
+      sentences = Array.from(segmenter.segment(text))
+        .map(s => s.segment.trim())
+        .filter(s => s.length > 0);
+    } catch (e) {
+      sentences = [];
+    }
+  }
+
+  // Fallback regex if Intl.Segmenter is unavailable
+  if (!sentences || sentences.length === 0) {
+    const rawMatches = text.match(/[^.!?]+(?:[.!?]+["'”’]?|$)/g);
+    sentences = (rawMatches || [text]).map(s => s.trim()).filter(s => s.length > 0);
+  }
+
+  // 4. Restore protected tokens in each sentence
+  sentences = sentences.map(sentence => {
+    let restored = sentence;
+    protectedTokens.forEach((original, token) => {
+      restored = restored.replaceAll(token, original);
+    });
+    return restored.trim();
+  }).filter(Boolean);
+
+  // 5. Merge accidental fragments (e.g. lower-case continuation)
+  const mergedSentences = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const curr = sentences[i];
+    if (mergedSentences.length > 0 && /^[a-z0-9,;:]/.test(curr)) {
+      mergedSentences[mergedSentences.length - 1] += ` ${curr}`;
+    } else {
+      mergedSentences.push(curr);
+    }
+  }
+
+  // 6. Select the desired number of complete sentences
+  const count = Math.max(1, maxSentences || 2);
+  const selected = mergedSentences.slice(0, count);
+  let result = selected.join(' ').trim();
+
+  // 7. Ensure clean terminal punctuation at the very end
+  if (result && !/[.!?]["'”’]?$/.test(result)) {
+    result += '.';
+  }
+
+  return result;
+}
+
 export class PersonaService {
   constructor(initialPersonaId = 'wanderer') {
     this.currentPersona = PERSONAS[initialPersonaId] || PERSONAS.wanderer;
@@ -119,21 +242,16 @@ export class PersonaService {
       distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
     }
 
-    let intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
-
-    let extract = poi.extract || poi.shortDescription || '';
-    if (options.isConcise) {
-      const match = extract.match(/^(.*?[.!?])(\s|$)/);
-      extract = match ? match[1] : extract;
-    } else {
-      const sentences = extract.match(/[^.!?]+[.!?]+/g) || [extract];
-      extract = sentences.slice(0, 2).join(' ');
-    }
+    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
+    const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+    const rawBody = poi.extract || poi.shortDescription || '';
+    const extract = cleanAndSplitSentences(rawBody, maxSentences);
 
     return {
-      text: `${intro} ${extract} ${closing}`,
+      text: `${intro} ${extract} ${closing}`.replace(/\s+/g, ' ').trim(),
       rate: p.rate,
       pitch: p.pitch
     };
   }
 }
+

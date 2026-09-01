@@ -1,3 +1,5 @@
+import { cleanAndSplitSentences } from './personas.js';
+
 /**
  * Voice & Audio Service
  * Uses Web Speech API (SpeechSynthesis) + Web Audio API for pre-announcement chimes.
@@ -6,7 +8,7 @@
  */
 export class VoiceService {
   constructor() {
-    this.synth = window.speechSynthesis;
+    this.synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
     this.audioCtx = null;
     this.isMuted = false;
     this.isSpeaking = false;
@@ -19,6 +21,8 @@ export class VoiceService {
     this.speechHeartbeatTimer = null;
     this.currentPoi = null;
     this.lastPoi = null;
+    this.activeUtterance = null; // Retain reference to active utterance to prevent browser GC truncation
+
 
     this.initVoices();
   }
@@ -170,21 +174,17 @@ export class VoiceService {
         distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
       }
 
-      let intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
-      
-      let storyBody = poi.extract || poi.shortDescription || '';
-      if (options.isConcise) {
-        const match = storyBody.match(/^(.*?[.!?])(\s|$)/);
-        storyBody = match ? match[1] : storyBody;
-      } else {
-        const sentences = storyBody.match(/[^.!?]+[.!?]+/g) || [storyBody];
-        storyBody = sentences.slice(0, 2).join(' ');
-      }
-      fullSpeech = `${intro} ${storyBody}`;
+      const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
+      const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+      const rawBody = poi.extract || poi.shortDescription || '';
+      const storyBody = cleanAndSplitSentences(rawBody, maxSentences);
+      fullSpeech = `${intro} ${storyBody}`.replace(/\s+/g, ' ').trim();
     }
 
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(fullSpeech);
+      this.activeUtterance = utterance; // Prevent browser GC from terminating in-flight speech
+
       if (this.selectedVoice) utterance.voice = this.selectedVoice;
       utterance.rate = speechRate;
       utterance.pitch = speechPitch;
@@ -194,6 +194,7 @@ export class VoiceService {
           clearInterval(this.speechHeartbeatTimer);
           this.speechHeartbeatTimer = null;
         }
+        this.activeUtterance = null;
       };
 
       utterance.onstart = () => {
@@ -204,13 +205,13 @@ export class VoiceService {
           this.onStateChange({ isSpeaking: true, poi, lastPoi: this.lastPoi, wasSkipped: false });
         }
 
-        // Mobile speech keepalive: prevent long speech cutting off
+        // Mobile speech keepalive safety
         this.speechHeartbeatTimer = setInterval(() => {
-          if (this.synth.speaking) {
-            this.synth.pause();
+          if (this.synth && this.synth.speaking && !this.synth.paused) {
+            // Keep speech alive without disruptive stutter
             this.synth.resume();
           }
-        }, 10000);
+        }, 8000);
       };
 
       utterance.onend = () => {
@@ -226,7 +227,9 @@ export class VoiceService {
 
       utterance.onerror = (err) => {
         cleanup();
-        console.warn('SpeechSynthesis error:', err);
+        if (err.error !== 'canceled' && err.error !== 'interrupted') {
+          console.warn('SpeechSynthesis error:', err);
+        }
         this.isSpeaking = false;
         this.lastPoi = poi;
         this.currentPoi = null;
@@ -248,6 +251,7 @@ export class VoiceService {
     if (this.synth) {
       this.synth.cancel();
     }
+    this.activeUtterance = null;
     if (this.speechHeartbeatTimer) {
       clearInterval(this.speechHeartbeatTimer);
       this.speechHeartbeatTimer = null;
@@ -274,15 +278,16 @@ export class VoiceService {
   stop() {
     if (this.synth) {
       this.synth.cancel();
-      if (this.speechHeartbeatTimer) {
-        clearInterval(this.speechHeartbeatTimer);
-        this.speechHeartbeatTimer = null;
-      }
-      this.isSpeaking = false;
-      this.currentPoi = null;
-      if (this.onStateChange) {
-        this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
-      }
+    }
+    this.activeUtterance = null;
+    if (this.speechHeartbeatTimer) {
+      clearInterval(this.speechHeartbeatTimer);
+      this.speechHeartbeatTimer = null;
+    }
+    this.isSpeaking = false;
+    this.currentPoi = null;
+    if (this.onStateChange) {
+      this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
     }
   }
 

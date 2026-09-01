@@ -16,6 +16,8 @@ export class GpsService {
     this.simSpeedMultiplier = 3; // default 3x speed for demo
     this.simRoutePoints = [];
     this.onLocationUpdate = null;
+    this.lastGpsTimestamp = 0;
+    this.watchdogTimer = null;
   }
 
   /**
@@ -28,13 +30,25 @@ export class GpsService {
       return false;
     }
 
+    this.bindWatcher();
+    this.startWatchdog();
+    return true;
+  }
+
+  bindWatcher() {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, heading, speed } = pos.coords;
+        this.lastGpsTimestamp = Date.now();
         this.updatePosition(latitude, longitude, heading, speed, false);
       },
       (err) => {
-        console.warn('Geolocation error:', err.message);
+        console.warn('Geolocation watch notice:', err.message);
       },
       {
         enableHighAccuracy: true,
@@ -42,8 +56,52 @@ export class GpsService {
         timeout: 10000
       }
     );
+  }
 
-    return true;
+  startWatchdog() {
+    this.stopWatchdog();
+    // Hardware GPS keep-alive: if mobile OS deprioritizes watchPosition during screen lock / background,
+    // trigger a direct single-shot position query to revive hardware chip.
+    this.watchdogTimer = setInterval(() => {
+      if (this.watchId !== null && navigator.geolocation) {
+        const elapsed = Date.now() - this.lastGpsTimestamp;
+        if (elapsed > 12000) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const { latitude, longitude, heading, speed } = pos.coords;
+              this.lastGpsTimestamp = Date.now();
+              this.updatePosition(latitude, longitude, heading, speed, false);
+            },
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 3000, timeout: 8000 }
+          );
+        }
+      }
+    }, 10000);
+  }
+
+  stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /**
+   * Instant GPS re-sync called immediately when app returns to foreground / phone unlocked
+   */
+  resyncLocation() {
+    if (this.watchId !== null && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, heading, speed } = pos.coords;
+          this.lastGpsTimestamp = Date.now();
+          this.updatePosition(latitude, longitude, heading, speed, false);
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+      );
+    }
   }
 
   stopLiveTracking() {
@@ -51,6 +109,7 @@ export class GpsService {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this.stopWatchdog();
   }
 
   /**

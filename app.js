@@ -842,6 +842,126 @@ class OsmService {
 
 // --- services/voice.js ---
 /**
+/**
+ * Robust natural language sentence segmenter & text cleaner.
+ * Properly handles honorifics, titles, abbreviations, decimal numbers,
+ * initials, citation brackets, and units without cutting off mid-sentence.
+ */
+function cleanAndSplitSentences(rawText, maxSentences = 2) {
+  if (!rawText || typeof rawText !== 'string') return '';
+
+  // 1. Clean Wikipedia citations like [1], [2], [citation needed], [note 1], etc.
+  let text = rawText
+    .replace(/\[\s*(?:\d+|citation needed|note \d+|edit)\s*\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!text) return '';
+
+  // 2. Protect common abbreviations from erroneous sentence breaks
+  const abbreviations = [
+    // Honorifics / Titles
+    'Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'Sr', 'Jr', 'Gen', 'Gov', 'Sen', 'Rep', 'Capt', 'Lt', 'Col', 'Maj', 'Rev', 'Fr', 'St', 'Mt', 'Ft',
+    // Geographic / Measurement / Infrastructure
+    'Rd', 'Ave', 'Blvd', 'Hwy', 'Ln', 'Ct', 'Pl', 'Sq', 'sq', 'mi', 'km', 'ft', 'in', 'm', 'ac', 'yd', 'oz', 'lb', 'lbs', 'dept',
+    // Latin / Dates / Common abbreviations
+    'c', 'ca', 'approx', 'est', 'e.g', 'i.e', 'vs', 'etc', 'viz', 'al', 'op', 'cit', 'a.m', 'p.m', 'am', 'pm', 'no', 'vol', 'p', 'pp', 'co', 'inc', 'corp', 'ltd',
+    // States & Regions
+    'U.S', 'U.S.A', 'U.K', 'E.U', 'N.Y', 'C.A', 'D.C', 'Fla', 'Tex', 'Wash', 'Calif'
+  ];
+
+  const protectedTokens = new Map();
+  let tokenIdx = 0;
+
+  // Protect decimal numbers (e.g. 3.5 miles, 14.2 km)
+  text = text.replace(/(\b\d+)\.(\d+\b)/g, (match, p1, p2) => {
+    const token = `__DECIMAL_${tokenIdx++}__`;
+    protectedTokens.set(token, `${p1}.${p2}`);
+    return token;
+  });
+
+  // Protect single initial letters with period (e.g. John F. Kennedy)
+  text = text.replace(/(^|\s)([A-Z])\.(\s|$)/g, (match, before, letter, after) => {
+    const token = `__INIT_${tokenIdx++}__`;
+    protectedTokens.set(token, `${letter}.`);
+    return `${before}${token}${after}`;
+  });
+
+  // Protect multi-dot abbreviations (e.g. U.S.A., e.g., i.e., a.m., p.m.)
+  text = text.replace(/\b([a-zA-Z])\.([a-zA-Z])\.([a-zA-Z])?\./gi, (match) => {
+    const token = `__ABBR_${tokenIdx++}__`;
+    protectedTokens.set(token, match);
+    return token;
+  });
+  text = text.replace(/\b([a-zA-Z])\.([a-zA-Z])\./gi, (match) => {
+    const token = `__ABBR_${tokenIdx++}__`;
+    protectedTokens.set(token, match);
+    return token;
+  });
+
+  // Protect single-dot known abbreviations
+  abbreviations.forEach(abbr => {
+    const regex = new RegExp(`\\b(${abbr})\\.(\\s+|$)`, 'gi');
+    text = text.replace(regex, (match, p1, space) => {
+      const token = `__ABBR_${tokenIdx++}__`;
+      protectedTokens.set(token, `${p1}.`);
+      return `${token}${space}`;
+    });
+  });
+
+  // 3. Sentence segmentation
+  let sentences = [];
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    try {
+      const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
+      sentences = Array.from(segmenter.segment(text))
+        .map(s => s.segment.trim())
+        .filter(s => s.length > 0);
+    } catch (e) {
+      sentences = [];
+    }
+  }
+
+  // Fallback regex if Intl.Segmenter is unavailable
+  if (!sentences || sentences.length === 0) {
+    const rawMatches = text.match(/[^.!?]+(?:[.!?]+["'”’]?|$)/g);
+    sentences = (rawMatches || [text]).map(s => s.trim()).filter(s => s.length > 0);
+  }
+
+  // 4. Restore protected tokens in each sentence
+  sentences = sentences.map(sentence => {
+    let restored = sentence;
+    protectedTokens.forEach((original, token) => {
+      restored = restored.replaceAll(token, original);
+    });
+    return restored.trim();
+  }).filter(Boolean);
+
+  // 5. Merge accidental fragments (e.g. lower-case continuation)
+  const mergedSentences = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const curr = sentences[i];
+    if (mergedSentences.length > 0 && /^[a-z0-9,;:]/.test(curr)) {
+      mergedSentences[mergedSentences.length - 1] += ` ${curr}`;
+    } else {
+      mergedSentences.push(curr);
+    }
+  }
+
+  // 6. Select the desired number of complete sentences
+  const count = Math.max(1, maxSentences || 2);
+  const selected = mergedSentences.slice(0, count);
+  let result = selected.join(' ').trim();
+
+  // 7. Ensure clean terminal punctuation at the very end
+  if (result && !/[.!?]["'”’]?$/.test(result)) {
+    result += '.';
+  }
+
+  return result;
+}
+
+/**
  * Voice & Audio Service
  * Uses Web Speech API (SpeechSynthesis) + Web Audio API for pre-announcement chimes.
  * Features keep-alive heartbeats to prevent mobile OS speech timeouts.
@@ -849,7 +969,7 @@ class OsmService {
  */
 class VoiceService {
   constructor() {
-    this.synth = window.speechSynthesis;
+    this.synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
     this.audioCtx = null;
     this.isMuted = false;
     this.isSpeaking = false;
@@ -862,6 +982,7 @@ class VoiceService {
     this.speechHeartbeatTimer = null;
     this.currentPoi = null;
     this.lastPoi = null;
+    this.activeUtterance = null; // Retain reference to active utterance to prevent browser GC truncation
 
     this.initVoices();
   }
@@ -1013,21 +1134,17 @@ class VoiceService {
         distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
       }
 
-      let intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
-      
-      let storyBody = poi.extract || poi.shortDescription || '';
-      if (options.isConcise) {
-        const match = storyBody.match(/^(.*?[.!?])(\s|$)/);
-        storyBody = match ? match[1] : storyBody;
-      } else {
-        const sentences = storyBody.match(/[^.!?]+[.!?]+/g) || [storyBody];
-        storyBody = sentences.slice(0, 2).join(' ');
-      }
-      fullSpeech = `${intro} ${storyBody}`;
+      const intro = `Coming up ${bearingPhrase}, about ${distPhrase}: ${poi.title}.`;
+      const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+      const rawBody = poi.extract || poi.shortDescription || '';
+      const storyBody = cleanAndSplitSentences(rawBody, maxSentences);
+      fullSpeech = `${intro} ${storyBody}`.replace(/\s+/g, ' ').trim();
     }
 
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(fullSpeech);
+      this.activeUtterance = utterance; // Prevent browser GC from terminating in-flight speech
+
       if (this.selectedVoice) utterance.voice = this.selectedVoice;
       utterance.rate = speechRate;
       utterance.pitch = speechPitch;
@@ -1037,6 +1154,7 @@ class VoiceService {
           clearInterval(this.speechHeartbeatTimer);
           this.speechHeartbeatTimer = null;
         }
+        this.activeUtterance = null;
       };
 
       utterance.onstart = () => {
@@ -1047,13 +1165,13 @@ class VoiceService {
           this.onStateChange({ isSpeaking: true, poi, lastPoi: this.lastPoi, wasSkipped: false });
         }
 
-        // Mobile speech keepalive: prevent long speech cutting off
+        // Mobile speech keepalive safety
         this.speechHeartbeatTimer = setInterval(() => {
-          if (this.synth.speaking) {
-            this.synth.pause();
+          if (this.synth && this.synth.speaking && !this.synth.paused) {
+            // Keep speech alive without disruptive stutter
             this.synth.resume();
           }
-        }, 10000);
+        }, 8000);
       };
 
       utterance.onend = () => {
@@ -1069,7 +1187,9 @@ class VoiceService {
 
       utterance.onerror = (err) => {
         cleanup();
-        console.warn('SpeechSynthesis error:', err);
+        if (err.error !== 'canceled' && err.error !== 'interrupted') {
+          console.warn('SpeechSynthesis error:', err);
+        }
         this.isSpeaking = false;
         this.lastPoi = poi;
         this.currentPoi = null;
@@ -1091,6 +1211,7 @@ class VoiceService {
     if (this.synth) {
       this.synth.cancel();
     }
+    this.activeUtterance = null;
     if (this.speechHeartbeatTimer) {
       clearInterval(this.speechHeartbeatTimer);
       this.speechHeartbeatTimer = null;
@@ -1117,15 +1238,16 @@ class VoiceService {
   stop() {
     if (this.synth) {
       this.synth.cancel();
-      if (this.speechHeartbeatTimer) {
-        clearInterval(this.speechHeartbeatTimer);
-        this.speechHeartbeatTimer = null;
-      }
-      this.isSpeaking = false;
-      this.currentPoi = null;
-      if (this.onStateChange) {
-        this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
-      }
+    }
+    this.activeUtterance = null;
+    if (this.speechHeartbeatTimer) {
+      clearInterval(this.speechHeartbeatTimer);
+      this.speechHeartbeatTimer = null;
+    }
+    this.isSpeaking = false;
+    this.currentPoi = null;
+    if (this.onStateChange) {
+      this.onStateChange({ isSpeaking: false, poi: null, lastPoi: this.lastPoi, wasSkipped: false });
     }
   }
 
@@ -1156,6 +1278,8 @@ class GpsService {
     this.simSpeedMultiplier = 3; // default 3x speed for demo
     this.simRoutePoints = [];
     this.onLocationUpdate = null;
+    this.lastGpsTimestamp = 0;
+    this.watchdogTimer = null;
   }
 
   /**
@@ -1168,13 +1292,25 @@ class GpsService {
       return false;
     }
 
+    this.bindWatcher();
+    this.startWatchdog();
+    return true;
+  }
+
+  bindWatcher() {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, heading, speed } = pos.coords;
+        this.lastGpsTimestamp = Date.now();
         this.updatePosition(latitude, longitude, heading, speed, false);
       },
       (err) => {
-        console.warn('Geolocation error:', err.message);
+        console.warn('Geolocation watch notice:', err.message);
       },
       {
         enableHighAccuracy: true,
@@ -1182,8 +1318,52 @@ class GpsService {
         timeout: 10000
       }
     );
+  }
 
-    return true;
+  startWatchdog() {
+    this.stopWatchdog();
+    // Hardware GPS keep-alive: if mobile OS deprioritizes watchPosition during screen lock / background,
+    // trigger a direct single-shot position query to revive hardware chip.
+    this.watchdogTimer = setInterval(() => {
+      if (this.watchId !== null && navigator.geolocation) {
+        const elapsed = Date.now() - this.lastGpsTimestamp;
+        if (elapsed > 12000) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const { latitude, longitude, heading, speed } = pos.coords;
+              this.lastGpsTimestamp = Date.now();
+              this.updatePosition(latitude, longitude, heading, speed, false);
+            },
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 3000, timeout: 8000 }
+          );
+        }
+      }
+    }, 10000);
+  }
+
+  stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /**
+   * Instant GPS re-sync called immediately when app returns to foreground / phone unlocked
+   */
+  resyncLocation() {
+    if (this.watchId !== null && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, heading, speed } = pos.coords;
+          this.lastGpsTimestamp = Date.now();
+          this.updatePosition(latitude, longitude, heading, speed, false);
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+      );
+    }
   }
 
   stopLiveTracking() {
@@ -1191,6 +1371,7 @@ class GpsService {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    this.stopWatchdog();
   }
 
   /**
@@ -1660,11 +1841,13 @@ class DetourBudgetService {
 // --- services/heartbeat.js ---
 /**
  * Silent Audio Heartbeat & MediaSession Service
- * Prevents mobile OS (iOS Safari & Android Chrome) from throttling background GPS
- * when the screen locks or when the user switches to Google Maps.
+ * Uses HTML5 Audio silent loop + MediaSession + Web Audio API to prevent
+ * mobile OS (iOS Safari & Android Chrome) from throttling background GPS
+ * and disconnecting WebSocket/network when the screen locks or when switching apps.
  */
 class HeartbeatService {
   constructor() {
+    this.audioElement = null;
     this.audioCtx = null;
     this.oscillator = null;
     this.gainNode = null;
@@ -1672,34 +1855,57 @@ class HeartbeatService {
   }
 
   /**
+   * Create an inaudible HTML5 audio loop with valid silent PCM WAV data
+   */
+  getSilentAudio() {
+    if (!this.audioElement && typeof Audio !== 'undefined') {
+      // 1-second silent WAV base64
+      const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+      this.audioElement = new Audio(silentWav);
+      this.audioElement.loop = true;
+      this.audioElement.volume = 0.001; // Inaudible
+    }
+    return this.audioElement;
+  }
+
+  /**
    * Start the inaudible background audio loop on user interaction
    */
-  start() {
+  async start() {
     if (this.isActive) return;
 
     try {
+      // 1. Start HTML5 Audio element loop (critical for iOS Safari & Android Chrome background execution priority)
+      const audio = this.getSilentAudio();
+      if (audio) {
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(err => {
+            console.warn('HTML5 Audio silent keepalive notice:', err.message);
+          });
+        }
+      }
+
+      // 2. Also initialize Web Audio API sub-audible oscillator as dual-layer fallback
       const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContext) return;
+      if (AudioContext) {
+        if (!this.audioCtx) {
+          this.audioCtx = new AudioContext();
+        }
+        if (this.audioCtx.state === 'suspended') {
+          await this.audioCtx.resume();
+        }
 
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
+        this.oscillator = this.audioCtx.createOscillator();
+        this.gainNode = this.audioCtx.createGain();
+        this.oscillator.type = 'sine';
+        this.oscillator.frequency.setValueAtTime(30, this.audioCtx.currentTime); // 30Hz sub-bass
+        this.gainNode.gain.setValueAtTime(0.0001, this.audioCtx.currentTime); // Inaudible
+
+        this.oscillator.connect(this.gainNode);
+        this.gainNode.connect(this.audioCtx.destination);
+        this.oscillator.start();
       }
-
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-
-      // Generate a near-silent inaudible loop (sub-audible low frequency with near-zero gain)
-      this.oscillator = this.audioCtx.createOscillator();
-      this.gainNode = this.audioCtx.createGain();
-
-      this.oscillator.type = 'sine';
-      this.oscillator.frequency.setValueAtTime(30, this.audioCtx.currentTime); // 30Hz sub-bass
-      this.gainNode.gain.setValueAtTime(0.0001, this.audioCtx.currentTime); // Inaudible
-
-      this.oscillator.connect(this.gainNode);
-      this.gainNode.connect(this.audioCtx.destination);
-      this.oscillator.start();
 
       this.isActive = true;
       this.setupMediaSession();
@@ -1711,41 +1917,52 @@ class HeartbeatService {
 
   setupMediaSession() {
     if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'The Wandering Layer',
-        artist: 'The Map Beyond The Directions',
-        album: 'Road Trip Audio Companion',
-        artwork: [
-          { src: 'https://raw.githubusercontent.com/feathericons/feather/master/icons/compass.svg', sizes: '512x512', type: 'image/svg+xml' }
-        ]
-      });
+      try {
+        navigator.mediaSession.playbackState = 'playing';
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'Wanderlust GPS Companion',
+          artist: 'The Map Beyond The Directions',
+          album: 'Road Trip Audio Companion',
+          artwork: [
+            { src: 'https://raw.githubusercontent.com/feathericons/feather/master/icons/compass.svg', sizes: '512x512', type: 'image/svg+xml' }
+          ]
+        });
 
-      // Handle lockscreen & bluetooth steering wheel buttons
-      navigator.mediaSession.setActionHandler('play', () => this.start());
-      navigator.mediaSession.setActionHandler('pause', () => {
-        if (window.app && typeof window.app.skipCurrentStory === 'function') {
-          window.app.skipCurrentStory();
-        }
-      });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        if (window.app && typeof window.app.skipCurrentStory === 'function') {
-          window.app.skipCurrentStory();
-        }
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        if (window.app && typeof window.app.replayLastStory === 'function') {
-          window.app.replayLastStory();
-        }
-      });
-      navigator.mediaSession.setActionHandler('stop', () => {
-        if (window.app && typeof window.app.skipCurrentStory === 'function') {
-          window.app.skipCurrentStory();
-        }
-      });
+        // Handle lockscreen & bluetooth steering wheel buttons
+        navigator.mediaSession.setActionHandler('play', () => this.start());
+        navigator.mediaSession.setActionHandler('pause', () => {
+          if (window.app && typeof window.app.skipCurrentStory === 'function') {
+            window.app.skipCurrentStory();
+          }
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          if (window.app && typeof window.app.skipCurrentStory === 'function') {
+            window.app.skipCurrentStory();
+          }
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          if (window.app && typeof window.app.replayLastStory === 'function') {
+            window.app.replayLastStory();
+          }
+        });
+        navigator.mediaSession.setActionHandler('stop', () => {
+          if (window.app && typeof window.app.skipCurrentStory === 'function') {
+            window.app.skipCurrentStory();
+          }
+        });
+      } catch (e) {
+        console.warn('MediaSession handler registration notice:', e);
+      }
     }
   }
 
   stop() {
+    if (this.audioElement) {
+      try {
+        this.audioElement.pause();
+        this.audioElement.currentTime = 0;
+      } catch (e) {}
+    }
     if (this.oscillator) {
       try {
         this.oscillator.stop();
@@ -1753,7 +1970,105 @@ class HeartbeatService {
       } catch (e) {}
       this.oscillator = null;
     }
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = 'none';
+      } catch (e) {}
+    }
     this.isActive = false;
+  }
+}
+
+
+// --- services/wake-lock.js ---
+/**
+ * Screen Wake Lock Service
+ * Uses the W3C Screen Wake Lock API (navigator.wakeLock) to keep the display
+ * lit and awake when driving in the foreground (like Google Maps/Waze).
+ * Automatically re-acquires lock upon app visibility recovery.
+ * 100% Client-side.
+ */
+class WakeLockService {
+  constructor() {
+    this.wakeLockSentinel = null;
+    this.isEnabled = true; // Default to true for in-car road trip navigation
+    this.onStateChange = null;
+    this.isSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
+    this.setupVisibilityListener();
+  }
+
+  setupVisibilityListener() {
+    if (typeof document === 'undefined') return;
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && this.isEnabled) {
+        // Re-acquire wake lock when app returns to foreground
+        await this.request();
+      }
+    });
+  }
+
+  /**
+   * Request screen wake lock
+   */
+  async request() {
+    if (!this.isSupported || !this.isEnabled) return false;
+
+    // If already active and not released, return true
+    if (this.wakeLockSentinel && !this.wakeLockSentinel.released) {
+      return true;
+    }
+
+    try {
+      this.wakeLockSentinel = await navigator.wakeLock.request('screen');
+      this.wakeLockSentinel.addEventListener('release', () => {
+        if (this.onStateChange) {
+          this.onStateChange(this.isActive());
+        }
+      });
+      if (this.onStateChange) {
+        this.onStateChange(true);
+      }
+      console.log('Screen Wake Lock acquired: display will remain lit.');
+      return true;
+    } catch (err) {
+      console.warn('Screen Wake Lock request notice:', err.message);
+      if (this.onStateChange) {
+        this.onStateChange(false);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * Release screen wake lock
+   */
+  async release() {
+    if (this.wakeLockSentinel) {
+      try {
+        await this.wakeLockSentinel.release();
+      } catch (e) {}
+      this.wakeLockSentinel = null;
+    }
+    if (this.onStateChange) {
+      this.onStateChange(false);
+    }
+  }
+
+  /**
+   * Toggle user preference for keeping screen awake
+   */
+  async toggleEnabled(enabled = null) {
+    this.isEnabled = (enabled !== null) ? Boolean(enabled) : !this.isEnabled;
+    if (this.isEnabled) {
+      await this.request();
+    } else {
+      await this.release();
+    }
+    return this.isEnabled;
+  }
+
+  isActive() {
+    return Boolean(this.wakeLockSentinel && !this.wakeLockSentinel.released);
   }
 }
 
@@ -2014,19 +2329,13 @@ class PersonaService {
       distPhrase = poi.dist < 1000 ? `${poi.dist} meters` : `${distanceKm} kilometers`;
     }
 
-    let intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
-
-    let extract = poi.extract || poi.shortDescription || '';
-    if (options.isConcise) {
-      const match = extract.match(/^(.*?[.!?])(\s|$)/);
-      extract = match ? match[1] : extract;
-    } else {
-      const sentences = extract.match(/[^.!?]+[.!?]+/g) || [extract];
-      extract = sentences.slice(0, 2).join(' ');
-    }
+    const intro = `${prefix}About ${distPhrase} ${bearingPhrase}, stands ${poi.title}.`;
+    const maxSentences = options.isConcise ? 1 : (options.maxSentences || 2);
+    const rawBody = poi.extract || poi.shortDescription || '';
+    const extract = cleanAndSplitSentences(rawBody, maxSentences);
 
     return {
-      text: `${intro} ${extract} ${closing}`,
+      text: `${intro} ${extract} ${closing}`.replace(/\s+/g, ' ').trim(),
       rate: p.rate,
       pitch: p.pitch
     };
@@ -3519,6 +3828,13 @@ class WanderingLayerApp {
     this.journal = new JournalService(this.storage);
     this.personas = new PersonaService('wanderer');
     this.routeService = new RouteService(this.wiki, this.osm, this.storage, this.weather);
+    this.wakeLock = new WakeLockService();
+
+    const savedWakeLock = localStorage.getItem('keep_screen_awake');
+    if (savedWakeLock !== null) {
+      this.wakeLock.isEnabled = (savedWakeLock === 'true');
+    }
+    this.wakeLock.onStateChange = (isActive) => this.updateWakeLockUI(isActive);
 
     this.map = null;
     this.carMarker = null;
@@ -3564,6 +3880,40 @@ class WanderingLayerApp {
     try { this.initVoiceState(); } catch (e) { console.warn('Voice state init error:', e); }
     try { this.initAutoLocation(); } catch (e) { console.warn('AutoLocation init error:', e); }
     try { this.checkSharedUrlParams(); } catch (e) { console.warn('Shared URL params check error:', e); }
+  }
+
+  updateWakeLockUI(isActive) {
+    const wakeBtn = document.getElementById('wake-lock-btn');
+    const wakeLabel = document.getElementById('wake-lock-label');
+    const wakeToggle = document.getElementById('wake-lock-toggle');
+    const hudWakeBadge = document.getElementById('hud-wake-badge');
+    const oledWakeBtn = document.getElementById('oled-wake-lock-btn');
+
+    if (wakeBtn) {
+      wakeBtn.classList.toggle('wake-lock-active', Boolean(isActive));
+    }
+    if (wakeLabel) {
+      wakeLabel.textContent = isActive ? 'Screen Lit' : 'Screen Auto';
+    }
+    if (wakeToggle) {
+      wakeToggle.checked = this.wakeLock.isEnabled;
+    }
+    if (hudWakeBadge) {
+      hudWakeBadge.style.display = isActive ? 'inline-flex' : 'none';
+    }
+    if (oledWakeBtn) {
+      oledWakeBtn.textContent = isActive ? '🔆 SCREEN LIT: ON' : '💤 SCREEN LIT: OFF';
+      oledWakeBtn.style.color = isActive ? '#fbbf24' : 'var(--text-muted)';
+      oledWakeBtn.style.borderColor = isActive ? '#f59e0b' : 'var(--border)';
+      oledWakeBtn.style.background = isActive ? 'rgba(245, 158, 11, 0.12)' : 'transparent';
+    }
+  }
+
+  async toggleWakeLock(forceVal = null) {
+    const newState = await this.wakeLock.toggleEnabled(forceVal);
+    localStorage.setItem('keep_screen_awake', String(newState));
+    this.updateWakeLockUI(this.wakeLock.isActive());
+    return newState;
   }
 
   initServiceWorker() {
@@ -4004,6 +4354,40 @@ class WanderingLayerApp {
       }
     });
 
+    // Screen Wake Lock Toggle Buttons (Header, HUD, Settings)
+    document.getElementById('wake-lock-btn')?.addEventListener('click', () => {
+      this.toggleWakeLock();
+    });
+
+    document.getElementById('oled-wake-lock-btn')?.addEventListener('click', () => {
+      this.toggleWakeLock();
+    });
+
+    document.getElementById('wake-lock-toggle')?.addEventListener('change', (e) => {
+      this.toggleWakeLock(e.target.checked);
+    });
+
+    // App Visibility & Lifecycle Recovery: Re-acquire Wake Lock and Resync Stalled GPS
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible') {
+        if (this.wakeLock.isEnabled && (this.isTracking || this.isHudMode || this.gps.isSimulating)) {
+          await this.wakeLock.request();
+        }
+        this.gps.resyncLocation();
+        this.voice.unlockAudio();
+        if (this.isTracking && this.gps.currentPosition) {
+          this.updateContextHUD(this.gps.currentPosition.lat, this.gps.currentPosition.lng);
+        }
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      this.gps.resyncLocation();
+      if (this.wakeLock.isEnabled && (this.isTracking || this.isHudMode || this.gps.isSimulating)) {
+        this.wakeLock.request();
+      }
+    });
+
     // Live GPS Start/Stop button
     const startBtn = document.getElementById('start-journey-btn');
     startBtn.addEventListener('click', () => {
@@ -4012,6 +4396,9 @@ class WanderingLayerApp {
 
       if (!this.isTracking) {
         this.journal.startSession();
+        if (this.wakeLock.isEnabled) {
+          this.wakeLock.request();
+        }
         const started = this.gps.startLiveTracking();
         if (started) {
           this.isTracking = true;
@@ -4023,6 +4410,9 @@ class WanderingLayerApp {
         this.gps.stopLiveTracking();
         this.gps.stopSimulation();
         this.heartbeat.stop();
+        if (!this.isHudMode) {
+          this.wakeLock.release();
+        }
         this.isTracking = false;
         startBtn.classList.remove('tracking');
         startBtn.innerHTML = `<span>Start Journey (Live GPS)</span>`;
@@ -4050,6 +4440,9 @@ class WanderingLayerApp {
     hudModeBtn.addEventListener('click', () => {
       this.isHudMode = true;
       drivingHudView.style.display = 'flex';
+      if (this.wakeLock.isEnabled) {
+        this.wakeLock.request();
+      }
       if (this.currentPois.length > 0) {
         this.updateOledDisplay(this.currentPois[0]);
       }
@@ -4058,6 +4451,9 @@ class WanderingLayerApp {
     exitHudBtn.addEventListener('click', () => {
       this.isHudMode = false;
       drivingHudView.style.display = 'none';
+      if (!this.isTracking) {
+        this.wakeLock.release();
+      }
     });
 
     document.getElementById('oled-speak-btn')?.addEventListener('click', () => {
@@ -4437,6 +4833,7 @@ class WanderingLayerApp {
         searchRadius: this.searchRadius,
         cooldownSeconds: this.voice.cooldownSeconds,
         isConcise: this.isConcise,
+        keepScreenAwake: this.wakeLock.isEnabled,
         lastKnownLocation: this.getLastKnownLocation()
       };
 
@@ -4519,6 +4916,11 @@ class WanderingLayerApp {
                 this.useForwardConeFilter = res.settings.useForwardConeFilter;
                 const fToggle = document.getElementById('forward-cone-toggle');
                 if (fToggle) fToggle.checked = this.useForwardConeFilter;
+              }
+              if (typeof res.settings.keepScreenAwake === 'boolean') {
+                this.wakeLock.isEnabled = res.settings.keepScreenAwake;
+                localStorage.setItem('keep_screen_awake', String(this.wakeLock.isEnabled));
+                this.updateWakeLockUI(this.wakeLock.isActive());
               }
               if (res.settings.lastKnownLocation) {
                 this.saveLastKnownLocation(res.settings.lastKnownLocation.lat, res.settings.lastKnownLocation.lng);
