@@ -9,18 +9,23 @@ export class WikiService {
     this.storage = storageService;
     this.lang = initialLang;
     this.cache = new Map(); // Cache summaries by key
+    this.geoCache = new Map(); // Spatial cache for geosearch
     this.narratedPages = new Set(); // Prevent re-narrating the same landmark
   }
 
   setLanguage(langCode) {
     this.lang = langCode || 'en';
     this.cache.clear();
+    this.geoCache.clear();
   }
 
   getHeaders() {
+    if (typeof window !== 'undefined') {
+      return {};
+    }
     return {
-      'User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)',
-      'Api-User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)'
+      'Api-User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)',
+      'User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)'
     };
   }
 
@@ -45,15 +50,24 @@ export class WikiService {
    */
   async findNearby(lat, lng, radiusMeters = 3000, limit = 8, filterNarrated = false) {
     const clampedRadius = Math.min(Math.max(radiusMeters, 500), 10000);
+    const gridKey = `${this.lang}_${lat.toFixed(2)}_${lng.toFixed(2)}_${Math.round(clampedRadius / 1000)}`;
 
-    const [wikiResults, voyageResults] = await Promise.allSettled([
-      this.fetchWikipediaGeo(lat, lng, clampedRadius, limit, filterNarrated),
-      this.fetchWikivoyageGeo(lat, lng, clampedRadius, Math.max(2, Math.floor(limit / 3)), filterNarrated)
-    ]);
+    if (this.geoCache.has(gridKey)) {
+      const cached = this.geoCache.get(gridKey);
+      if (filterNarrated) {
+        return cached.filter(item => !this.isNarrated(item.id));
+      }
+      return cached;
+    }
 
-    const combined = [];
-    if (wikiResults.status === 'fulfilled' && Array.isArray(wikiResults.value)) combined.push(...wikiResults.value);
-    if (voyageResults.status === 'fulfilled' && Array.isArray(voyageResults.value)) combined.push(...voyageResults.value);
+    const wikiPois = await this.fetchWikipediaGeo(lat, lng, clampedRadius, limit, filterNarrated);
+
+    let combined = [...wikiPois];
+    // Only query Wikivoyage if Wikipedia returned few results to minimize API load
+    if (combined.length < 3) {
+      const voyagePois = await this.fetchWikivoyageGeo(lat, lng, clampedRadius, 3, filterNarrated);
+      combined.push(...voyagePois);
+    }
 
     // Deduplicate by title similarity
     const unique = [];
@@ -69,6 +83,7 @@ export class WikiService {
     });
 
     unique.sort((a, b) => (a.dist || 0) - (b.dist || 0));
+    this.geoCache.set(gridKey, unique);
     return unique;
   }
 
@@ -98,44 +113,55 @@ export class WikiService {
   async fetchWikipediaGeo(lat, lng, radius, limit, filterNarrated = false) {
     const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exchars=300&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
-    try {
-      const res = await fetch(url, { headers: this.getHeaders() });
-      if (!res.ok) throw new Error(`Wiki API returned ${res.status}`);
-      const data = await res.json();
-      const pages = data?.query?.pages;
-      if (!pages) return [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url, { headers: this.getHeaders() });
+        if (res.status === 429) {
+          if (attempt === 0) {
+            await new Promise(r => setTimeout(r, 250));
+            continue;
+          }
+          return [];
+        }
+        if (!res.ok) return [];
+        const data = await res.json();
+        const pages = data?.query?.pages;
+        if (!pages) return [];
 
-      const results = [];
-      for (const page of Object.values(pages)) {
-        if (!page || !page.pageid || !page.title) continue;
-        if (filterNarrated && (this.isNarrated(page.pageid) || this.isNarrated(`wiki-${page.pageid}`))) {
-          continue;
+        const results = [];
+        for (const page of Object.values(pages)) {
+          if (!page || !page.pageid || !page.title) continue;
+          if (filterNarrated && (this.isNarrated(page.pageid) || this.isNarrated(`wiki-${page.pageid}`))) {
+            continue;
+          }
+
+          const coords = page.coordinates && page.coordinates[0] ? page.coordinates[0] : null;
+          const pageLat = coords ? coords.lat : lat;
+          const pageLng = coords ? coords.lon : lng;
+          const dist = this.calculateDistance(lat, lng, pageLat, pageLng);
+
+          results.push({
+            id: `wiki-${page.pageid}`,
+            source: 'wikipedia',
+            title: page.title,
+            lat: pageLat,
+            lng: pageLng,
+            dist: Math.round(dist),
+            extract: page.extract || page.description || 'A notable roadside discovery.',
+            shortDescription: page.description || 'Historic or cultural landmark',
+            thumbnail: page.thumbnail?.source || null,
+            pageUrl: `https://${this.lang}.wikipedia.org/?curid=${page.pageid}`
+          });
         }
 
-        const coords = page.coordinates && page.coordinates[0] ? page.coordinates[0] : null;
-        const pageLat = coords ? coords.lat : lat;
-        const pageLng = coords ? coords.lon : lng;
-        const dist = this.calculateDistance(lat, lng, pageLat, pageLng);
-
-        results.push({
-          id: `wiki-${page.pageid}`,
-          source: 'wikipedia',
-          title: page.title,
-          lat: pageLat,
-          lng: pageLng,
-          dist: Math.round(dist),
-          extract: page.extract || page.description || 'A notable roadside discovery.',
-          shortDescription: page.description || 'Historic or cultural landmark',
-          thumbnail: page.thumbnail?.source || null,
-          pageUrl: `https://${this.lang}.wikipedia.org/?curid=${page.pageid}`
-        });
+        return results;
+      } catch (err) {
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 150));
+        }
       }
-
-      return results;
-    } catch (err) {
-      console.warn('Wikipedia batch fetch notice:', err.message);
-      return [];
     }
+    return [];
   }
 
   async fetchWikivoyageGeo(lat, lng, radius, limit, filterNarrated = false) {
@@ -176,7 +202,6 @@ export class WikiService {
 
       return results;
     } catch (err) {
-      console.warn('Wikivoyage batch fetch notice:', err.message);
       return [];
     }
   }

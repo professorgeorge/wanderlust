@@ -63,21 +63,25 @@ export class OsmService {
       out body 8;
     `;
 
-    // Try primary and fallback mirrors
-    for (let attempt = 0; attempt < Math.min(this.overpassMirrors.length, 3); attempt++) {
+    // Try primary mirror with 2.2s quick timeout so corridor discovery never stalls
+    for (let attempt = 0; attempt < 2; attempt++) {
       const mirrorUrl = this.overpassMirrors[(this.currentMirrorIndex + attempt) % this.overpassMirrors.length];
 
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4500);
+        const timeoutId = setTimeout(() => controller.abort(), 2200);
+
+        const reqHeaders = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json'
+        };
+        if (typeof window === 'undefined') {
+          reqHeaders['User-Agent'] = 'WanderlustRoadTripApp/3.0 (OpenStreetMap Roadside Explorer)';
+        }
 
         const res = await fetch(mirrorUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'application/json',
-            'User-Agent': 'WanderlustRoadTripApp/3.0 (OpenStreetMap Roadside Explorer)'
-          },
+          headers: reqHeaders,
           body: 'data=' + encodeURIComponent(query),
           signal: controller.signal
         });

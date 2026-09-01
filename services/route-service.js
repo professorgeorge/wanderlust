@@ -480,14 +480,14 @@ export class RouteService {
     // Calculate total polyline distance
     const totalDistMeters = this.currentRoute.distanceMeters || this.calcTotalPolylineDistance(latLngs);
     
-    // Dynamically sample scan anchors every 15-25 km along the route
-    const stepMeters = Math.max(12000, Math.min(25000, totalDistMeters / 16));
+    // Dynamically sample scan anchors every 18-30 km along the route
+    const stepMeters = Math.max(16000, Math.min(30000, totalDistMeters / 12));
     const sampledPoints = this.samplePolylineByDistance(latLngs, stepMeters);
 
     const allDiscovered = new Map();
 
-    // Process sampled anchors in controlled batches of 3 to avoid burst rate-limits
-    const batchSize = 3;
+    // Process sampled anchors in smooth batches of 2 with spacing
+    const batchSize = 2;
     for (let i = 0; i < sampledPoints.length; i += batchSize) {
       const chunk = sampledPoints.slice(i, i + batchSize);
       const chunkPromises = chunk.map(async (pt) => {
@@ -536,7 +536,7 @@ export class RouteService {
       });
 
       if (i + batchSize < sampledPoints.length) {
-        await new Promise(r => setTimeout(r, 60));
+        await new Promise(r => setTimeout(r, 100));
       }
     }
 
@@ -580,29 +580,33 @@ export class RouteService {
     sortedList.sort((a, b) => a.projectionDistanceMeters - b.projectionDistanceMeters);
 
     // Balanced Distribution:
-    // Prevent start/end cities (< 5% of route) from swamping the list.
-    const startZoneMeters = Math.min(6000, totalDistMeters * 0.05);
-    const endZoneMeters = totalDistMeters - Math.min(6000, totalDistMeters * 0.05);
+    // When many items exist (>25), prevent start/end city anchors from crowding out en-route stops
+    let balancedList = [];
+    if (sortedList.length <= 25) {
+      balancedList = sortedList;
+    } else {
+      const startZoneMeters = Math.min(5000, totalDistMeters * 0.05);
+      const endZoneMeters = totalDistMeters - Math.min(5000, totalDistMeters * 0.05);
 
-    let startCount = 0;
-    let endCount = 0;
-    const balancedList = [];
+      let startCount = 0;
+      let endCount = 0;
 
-    for (const poi of sortedList) {
-      const proj = poi.projectionDistanceMeters;
-      if (proj <= startZoneMeters) {
-        if (startCount < 3) {
+      for (const poi of sortedList) {
+        const proj = poi.projectionDistanceMeters;
+        if (proj <= startZoneMeters) {
+          if (startCount < 5) {
+            balancedList.push(poi);
+            startCount++;
+          }
+        } else if (proj >= endZoneMeters) {
+          if (endCount < 5) {
+            balancedList.push(poi);
+            endCount++;
+          }
+        } else {
+          // En-route roadside wonder on the highway: ALWAYS include
           balancedList.push(poi);
-          startCount++;
         }
-      } else if (proj >= endZoneMeters) {
-        if (endCount < 3) {
-          balancedList.push(poi);
-          endCount++;
-        }
-      } else {
-        // En-route roadside wonder on the highway: ALWAYS include
-        balancedList.push(poi);
       }
     }
 
