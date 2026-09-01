@@ -3685,7 +3685,9 @@ class WanderingLayerApp {
     const applyLocation = (lat, lng, zoom = 13, source = 'gps') => {
       if (locationResolved && source === 'ip') return;
       locationResolved = true;
-      this.saveLastKnownLocation(lat, lng);
+      if (source === 'gps') {
+        this.saveLastKnownLocation(lat, lng);
+      }
       if (this.carMarker) this.carMarker.setLatLng([lat, lng]);
       if (this.radiusCircle) this.radiusCircle.setLatLng([lat, lng]);
       if (this.map) this.map.setView([lat, lng], zoom);
@@ -3707,17 +3709,20 @@ class WanderingLayerApp {
       );
     }
 
-    // 2. Instant IP Geolocation fallback (works immediately without waiting for browser prompt)
-    try {
-      const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.latitude && data.longitude && !locationResolved) {
-          applyLocation(data.latitude, data.longitude, 12, 'ip');
+    // 2. Instant IP Geolocation fallback (only if no last known location is available)
+    const lastKnown = this.getLastKnownLocation();
+    if (!lastKnown) {
+      try {
+        const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.latitude && data.longitude && !locationResolved) {
+            applyLocation(data.latitude, data.longitude, 12, 'ip');
+          }
         }
+      } catch (e) {
+        console.warn('IP geolocation notice:', e);
       }
-    } catch (e) {
-      console.warn('IP geolocation notice:', e);
     }
   }
 
@@ -5092,17 +5097,14 @@ class WanderingLayerApp {
     const status = statusEl || document.getElementById('route-status');
 
     if (locBtn) locBtn.textContent = '⏳ Locating...';
-    if (status) status.innerHTML = '<span>Detecting current location...</span>';
+    if (status) status.innerHTML = '<span>Detecting high-precision GPS location...</span>';
 
-    let resolved = false;
-
-    const setLocation = async (lat, lng, label = null) => {
-      if (resolved && !label) return;
-      resolved = true;
+    // Helper to apply verified coordinates to origin and route state
+    const applyCoords = async (lat, lng, sourceLabel = 'GPS') => {
       this.gps.updatePosition(lat, lng, null, 0, false);
       this.saveLastKnownLocation(lat, lng);
 
-      const placeName = label || await this.routeService.reverseGeocode(lat, lng);
+      const placeName = await this.routeService.reverseGeocode(lat, lng);
       if (input) input.value = `📍 ${placeName}`;
       this.selectedOrigin = {
         name: placeName,
@@ -5111,43 +5113,76 @@ class WanderingLayerApp {
       };
 
       if (locBtn) locBtn.textContent = '📍 Here';
-      if (status) status.innerHTML = `<span>✓ Located: <strong>${placeName}</strong> (${lat.toFixed(4)}, ${lng.toFixed(4)})</span>`;
+      if (status) {
+        const tag = sourceLabel ? ` (${sourceLabel})` : '';
+        status.innerHTML = `<span>✓ Located: <strong>${placeName}</strong> (${lat.toFixed(4)}, ${lng.toFixed(4)})${tag}</span>`;
+      }
     };
 
-    // 1. Instant IP Location resolution
-    try {
-      const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.latitude && data.longitude) {
-          const city = data.city || data.locality || data.principalSubdivision;
-          const state = data.principalSubdivisionCode ? data.principalSubdivisionCode.split('-').pop() : (data.principalSubdivision || '');
-          const label = city ? (state && state !== city ? `${city}, ${state}` : city) : null;
-          await setLocation(data.latitude, data.longitude, label);
-        }
-      }
-    } catch (e) {}
+    // 1. Fast-path: If the map already has an active, non-simulated live GPS fix, use it immediately
+    let hasLiveFix = false;
+    if (this.gps?.currentPosition && !this.gps.currentPosition.isSimulated && typeof this.gps.currentPosition.lat === 'number') {
+      hasLiveFix = true;
+      const { lat, lng } = this.gps.currentPosition;
+      await applyCoords(lat, lng, 'Live GPS');
+    }
 
-    // 2. Hardware GPS resolution (high accuracy refinement)
+    // 2. Query hardware GPS (high accuracy) to get or refine the latest coordinate fix
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
-          const { latitude, longitude } = pos.coords;
-          await setLocation(latitude, longitude, null);
+          const { latitude, longitude, accuracy } = pos.coords;
+          const accTag = accuracy ? `±${Math.round(accuracy)}m` : 'Hardware GPS';
+          await applyCoords(latitude, longitude, accTag);
         },
-        (err) => {
-          if (!resolved) {
-            const lastKnown = this.getLastKnownLocation();
-            if (lastKnown) {
-              setLocation(lastKnown.lat, lastKnown.lng, null);
-            } else {
-              if (locBtn) locBtn.textContent = '📍 Here';
-              if (status) status.innerHTML = `<span style="color:#f85149;">⚠️ Location unavailable. You can type your city or town name.</span>`;
-            }
+        async (err) => {
+          console.warn('Route location hardware GPS error/timeout:', err.message);
+          // If we already obtained a live fix from step 1, we do not need fallback
+          if (hasLiveFix) return;
+
+          // 3. Fallback: Last known saved GPS location
+          const lastKnown = this.getLastKnownLocation();
+          if (lastKnown && typeof lastKnown.lat === 'number' && typeof lastKnown.lng === 'number') {
+            await applyCoords(lastKnown.lat, lastKnown.lng, 'Last Known GPS');
+          } else {
+            // 4. Last resort: IP Geolocation (only when GPS completely denied or unavailable)
+            try {
+              const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client');
+              if (res.ok) {
+                const data = await res.json();
+                if (data.latitude && data.longitude) {
+                  const city = data.city || data.locality || data.principalSubdivision;
+                  const state = data.principalSubdivisionCode ? data.principalSubdivisionCode.split('-').pop() : (data.principalSubdivision || '');
+                  const label = city ? (state && state !== city ? `${city}, ${state}` : city) : 'Estimated Network Location';
+                  
+                  this.gps.updatePosition(data.latitude, data.longitude, null, 0, false);
+                  if (input) input.value = `📍 ${label}`;
+                  this.selectedOrigin = {
+                    name: label,
+                    lat: data.latitude,
+                    lng: data.longitude
+                  };
+                  if (locBtn) locBtn.textContent = '📍 Here';
+                  if (status) status.innerHTML = `<span>⚠️ Estimated via Network IP: <strong>${label}</strong> (${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})</span>`;
+                  return;
+                }
+              }
+            } catch (e) {}
+
+            if (locBtn) locBtn.textContent = '📍 Here';
+            if (status) status.innerHTML = `<span style="color:#f85149;">⚠️ GPS location unavailable. Please type your city or address.</span>`;
           }
         },
-        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
       );
+    } else if (!hasLiveFix) {
+      const lastKnown = this.getLastKnownLocation();
+      if (lastKnown) {
+        await applyCoords(lastKnown.lat, lastKnown.lng, 'Last Known GPS');
+      } else {
+        if (locBtn) locBtn.textContent = '📍 Here';
+        if (status) status.innerHTML = `<span style="color:#f85149;">⚠️ Geolocation not supported by browser. Please type origin.</span>`;
+      }
     }
   }
 
