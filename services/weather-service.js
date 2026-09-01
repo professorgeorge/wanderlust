@@ -12,6 +12,7 @@ export class WeatherService {
     this.lastCoords = null;
     this.cacheExpiryMs = 10 * 60 * 1000; // 10 minutes cache
     this.activeHazards = [];
+    this.pointCache = new Map();
   }
 
   /**
@@ -219,6 +220,11 @@ export class WeatherService {
     const arrivalHour = arrivalDate.getHours();
     const arrivalTimeFormatted = arrivalDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+    const cacheKey = `${lat.toFixed(2)}_${lng.toFixed(2)}_${arrivalHour}_${unitSystem}`;
+    if (this.pointCache.has(cacheKey)) {
+      return { ...this.pointCache.get(cacheKey), etaMinutes, arrivalTimeFormatted };
+    }
+
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&current=temperature_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m,visibility&hourly=temperature_2m,precipitation_probability,weather_code,visibility&temperature_unit=${tempUnit}&wind_speed_unit=${windUnit}&precipitation_unit=${precipUnit}&forecast_hours=24`;
 
     try {
@@ -258,7 +264,7 @@ export class WeatherService {
         suitabilityNote = '❄️ Chilly weather, dress warmly';
       }
 
-      return {
+      const result = {
         lat,
         lng,
         temp,
@@ -271,6 +277,8 @@ export class WeatherService {
         suitabilityNote,
         isAdverse
       };
+      this.pointCache.set(cacheKey, result);
+      return result;
     } catch (e) {
       console.warn('Point weather error:', e);
       return null;

@@ -1,35 +1,47 @@
 /**
  * OpenStreetMap (Overpass API) Service
- * Queries natural viewpoints, waterfalls, peaks, caves, hot springs, and historical ruins.
- * Features automated mirror failover across public Overpass servers.
+ * Queries natural viewpoints, waterfalls, peaks, caves, farm stands, bakeries, and historical ruins.
+ * Features automated mirror failover and grid caching.
  * 100% Free public open data.
  */
 export class OsmService {
   constructor() {
     this.narratedNodes = new Set();
+    this.cache = new Map();
     this.overpassMirrors = [
       'https://overpass-api.de/api/interpreter',
-      'https://overpass.kumi.systems/api/interpreter',
-      'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+      'https://lz4.overpass-api.de/api/interpreter',
+      'https://z.overpass-api.de/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter',
+      'https://overpass.osm.ch/api/interpreter'
     ];
     this.currentMirrorIndex = 0;
     this.lastQueryTime = 0;
   }
 
   /**
-   * Search for viewpoints, waterfalls, caves, and heritage spots within radius
+   * Search for viewpoints, waterfalls, caves, farm stands, and heritage spots within radius
    */
-  async findNearby(lat, lng, radiusMeters = 3000) {
+  async findNearby(lat, lng, radiusMeters = 3000, filterNarrated = false) {
+    // Spatial grid cache key (~5km grid cell)
+    const gridKey = `${lat.toFixed(2)}_${lng.toFixed(2)}_${Math.round(radiusMeters / 1000)}`;
+    if (this.cache.has(gridKey)) {
+      const cached = this.cache.get(gridKey);
+      if (filterNarrated) {
+        return cached.filter(el => !this.isNarrated(el.id));
+      }
+      return cached;
+    }
+
     const now = Date.now();
-    if (now - this.lastQueryTime < 1500) {
-      // Light throttle between rapid consecutive anchor calls
-      await new Promise(r => setTimeout(r, 400));
+    if (now - this.lastQueryTime < 400) {
+      await new Promise(r => setTimeout(r, 200));
     }
     this.lastQueryTime = Date.now();
 
     const radius = Math.min(Math.max(radiusMeters, 500), 5000);
     const query = `
-      [out:json][timeout:8];
+      [out:json][timeout:6];
       (
         node["amenity"="marketplace"](around:${radius},${lat},${lng});
         node["shop"="farm"](around:${radius},${lat},${lng});
@@ -52,19 +64,19 @@ export class OsmService {
     `;
 
     // Try primary and fallback mirrors
-    for (let attempt = 0; attempt < this.overpassMirrors.length; attempt++) {
+    for (let attempt = 0; attempt < Math.min(this.overpassMirrors.length, 3); attempt++) {
       const mirrorUrl = this.overpassMirrors[(this.currentMirrorIndex + attempt) % this.overpassMirrors.length];
 
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6500);
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
 
         const res = await fetch(mirrorUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
-            'User-Agent': 'TheWanderingLayer/2.0 (OpenStreetMap Roadside Explorer)'
+            'User-Agent': 'WanderlustRoadTripApp/3.0 (OpenStreetMap Roadside Explorer)'
           },
           body: 'data=' + encodeURIComponent(query),
           signal: controller.signal
@@ -73,7 +85,7 @@ export class OsmService {
         clearTimeout(timeoutId);
 
         if (!res.ok) {
-          throw new Error(`Mirror ${mirrorUrl} returned ${res.status}`);
+          throw new Error(`Mirror returned ${res.status}`);
         }
 
         const data = await res.json();
@@ -84,7 +96,7 @@ export class OsmService {
         const results = [];
         for (const el of data.elements) {
           if (!el.tags) continue;
-          if (this.isNarrated(el.id) || this.isNarrated(`osm-${el.id}`)) continue;
+          if (filterNarrated && (this.isNarrated(el.id) || this.isNarrated(`osm-${el.id}`))) continue;
 
           const type = el.tags.amenity || el.tags.shop || el.tags.tourism || el.tags.natural || el.tags.historic || 'scenic';
           const name = el.tags.name || `Scenic ${type.replace(/_/g, ' ')}`;
@@ -125,9 +137,10 @@ export class OsmService {
         }
 
         results.sort((a, b) => a.dist - b.dist);
+        this.cache.set(gridKey, results);
         return results;
       } catch (err) {
-        console.warn(`Overpass mirror fail (${mirrorUrl}):`, err.message);
+        // Fallback to next mirror quietly
       }
     }
 

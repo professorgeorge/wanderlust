@@ -480,32 +480,36 @@ export class RouteService {
     // Calculate total polyline distance
     const totalDistMeters = this.currentRoute.distanceMeters || this.calcTotalPolylineDistance(latLngs);
     
-    // Dynamically sample scan anchors every 18-25 km along the route
-    const stepMeters = Math.max(12000, Math.min(28000, totalDistMeters / 18));
+    // Dynamically sample scan anchors every 15-25 km along the route
+    const stepMeters = Math.max(12000, Math.min(25000, totalDistMeters / 16));
     const sampledPoints = this.samplePolylineByDistance(latLngs, stepMeters);
 
     const allDiscovered = new Map();
 
-    const fetchPromises = sampledPoints.map(async (pt) => {
-      const [wikiRes, osmRes] = await Promise.allSettled([
-        this.wiki ? this.wiki.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000), 8) : Promise.resolve([]),
-        this.osm ? this.osm.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000)) : Promise.resolve([])
-      ]);
-      const wikiPois = wikiRes.status === 'fulfilled' ? wikiRes.value : [];
-      const osmPois = osmRes.status === 'fulfilled' ? osmRes.value : [];
-      return [...wikiPois, ...osmPois];
-    });
+    // Process sampled anchors in controlled batches of 3 to avoid burst rate-limits
+    const batchSize = 3;
+    for (let i = 0; i < sampledPoints.length; i += batchSize) {
+      const chunk = sampledPoints.slice(i, i + batchSize);
+      const chunkPromises = chunk.map(async (pt) => {
+        const [wikiRes, osmRes] = await Promise.allSettled([
+          this.wiki ? this.wiki.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000), 8, false) : Promise.resolve([]),
+          this.osm ? this.osm.findNearby(pt[0], pt[1], Math.max(corridorRadiusMeters, 5000), false) : Promise.resolve([])
+        ]);
+        const wikiPois = wikiRes.status === 'fulfilled' && Array.isArray(wikiRes.value) ? wikiRes.value : [];
+        const osmPois = osmRes.status === 'fulfilled' && Array.isArray(osmRes.value) ? osmRes.value : [];
+        return [...wikiPois, ...osmPois];
+      });
 
-    const batches = await Promise.allSettled(fetchPromises);
-    batches.forEach(result => {
-      const pois = result.status === 'fulfilled' ? result.value : [];
+      const batchResults = await Promise.allSettled(chunkPromises);
+      batchResults.forEach(result => {
+        const pois = result.status === 'fulfilled' ? result.value : [];
 
-      pois.forEach(poi => {
-        if (!allDiscovered.has(poi.id)) {
+        pois.forEach(poi => {
+          if (!poi || !poi.id || allDiscovered.has(poi.id)) return;
           const { minDistance, projectionDistance } = this.calculateRouteProjection(poi.lat, poi.lng, latLngs);
 
-          // Only keep POIs within 6.5 km corridor of the actual driving route
-          if (minDistance > 6500) return;
+          // Keep POIs within 7.5 km corridor of the actual driving route
+          if (minDistance > 7500) return;
 
           const roundTripDetourKm = (minDistance * 1.35 * 2) / 1000;
           const detourDriveMinutes = Math.round((roundTripDetourKm / 35) * 60);
@@ -528,9 +532,13 @@ export class RouteService {
           poi.sunsetMatch = this.checkSunsetMatch(poi, departureDate);
 
           allDiscovered.set(poi.id, poi);
-        }
+        });
       });
-    });
+
+      if (i + batchSize < sampledPoints.length) {
+        await new Promise(r => setTimeout(r, 60));
+      }
+    }
 
     // Also include user wonder pins that lie along this corridor
     if (this.storage) {
@@ -600,7 +608,8 @@ export class RouteService {
 
     // Weather Enrichment at Specific Place & Specific Arrival Time (ETA)
     if (this.weather && balancedList.length > 0) {
-      const weatherPromises = balancedList.slice(0, 40).map(async (poi) => {
+      const topPois = balancedList.slice(0, 20);
+      const weatherPromises = topPois.map(async (poi) => {
         try {
           const w = await this.weather.getPointForecastAtTime(
             poi.lat,
@@ -611,7 +620,7 @@ export class RouteService {
           );
           poi.weather = w;
         } catch (e) {
-          console.warn('Corridor stop weather enrichment note:', e);
+          // Weather is progressive enhancement
         }
       });
       await Promise.allSettled(weatherPromises);

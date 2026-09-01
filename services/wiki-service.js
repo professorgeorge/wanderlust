@@ -1,14 +1,14 @@
 /**
  * Wikipedia & Wikivoyage Service
  * Queries nearby geocoded articles and travel guide footnotes
- * using public MediaWiki GeoSearch & REST APIs.
+ * using high-performance single-roundtrip batch MediaWiki generator queries.
  * 100% Free, no API key required, CORS-friendly (origin=*).
  */
 export class WikiService {
   constructor(storageService = null, initialLang = 'en') {
     this.storage = storageService;
     this.lang = initialLang;
-    this.cache = new Map(); // Cache summaries by title
+    this.cache = new Map(); // Cache summaries by key
     this.narratedPages = new Set(); // Prevent re-narrating the same landmark
   }
 
@@ -17,31 +17,50 @@ export class WikiService {
     this.cache.clear();
   }
 
+  getHeaders() {
+    return {
+      'User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)',
+      'Api-User-Agent': 'WanderlustRoadTripApp/3.0 (https://wanderlust.app; contact@wanderlust.app)'
+    };
+  }
+
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   /**
    * Search for Wikipedia and Wikivoyage articles near a coordinate
    * @param {number} lat - Latitude
    * @param {number} lng - Longitude
    * @param {number} radiusMeters - Search radius in meters (max 10000)
    * @param {number} limit - Maximum number of results (default: 8)
+   * @param {boolean} filterNarrated - Whether to omit already narrated pages (false for route planning)
    * @returns {Promise<Array>} Array of POI objects
    */
-  async findNearby(lat, lng, radiusMeters = 3000, limit = 8) {
+  async findNearby(lat, lng, radiusMeters = 3000, limit = 8, filterNarrated = false) {
     const clampedRadius = Math.min(Math.max(radiusMeters, 500), 10000);
 
     const [wikiResults, voyageResults] = await Promise.allSettled([
-      this.fetchWikipediaGeo(lat, lng, clampedRadius, limit),
-      this.fetchWikivoyageGeo(lat, lng, clampedRadius, Math.max(2, Math.floor(limit / 3)))
+      this.fetchWikipediaGeo(lat, lng, clampedRadius, limit, filterNarrated),
+      this.fetchWikivoyageGeo(lat, lng, clampedRadius, Math.max(2, Math.floor(limit / 3)), filterNarrated)
     ]);
 
     const combined = [];
-    if (wikiResults.status === 'fulfilled') combined.push(...wikiResults.value);
-    if (voyageResults.status === 'fulfilled') combined.push(...voyageResults.value);
+    if (wikiResults.status === 'fulfilled' && Array.isArray(wikiResults.value)) combined.push(...wikiResults.value);
+    if (voyageResults.status === 'fulfilled' && Array.isArray(voyageResults.value)) combined.push(...voyageResults.value);
 
     // Deduplicate by title similarity
     const unique = [];
     const seenTitles = new Set();
 
     combined.forEach(item => {
+      if (!item || !item.title) return;
       const cleanTitle = item.title.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!seenTitles.has(cleanTitle)) {
         seenTitles.add(cleanTitle);
@@ -49,7 +68,7 @@ export class WikiService {
       }
     });
 
-    unique.sort((a, b) => a.dist - b.dist);
+    unique.sort((a, b) => (a.dist || 0) - (b.dist || 0));
     return unique;
   }
 
@@ -60,9 +79,7 @@ export class WikiService {
   async quickGeoQuery(lat, lng, radius = 5000, limit = 5) {
     try {
       const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${lat}%7C${lng}&gsradius=${radius}&gslimit=${limit}&format=json&origin=*`;
-      const res = await fetch(url, {
-        headers: { 'Api-User-Agent': 'TheWanderingLayer/2.0 (Road Trip Audio Companion)' }
-      });
+      const res = await fetch(url, { headers: this.getHeaders() });
       if (!res.ok) return { count: 0, titles: [] };
       const data = await res.json();
       const items = data?.query?.geosearch || [];
@@ -75,122 +92,140 @@ export class WikiService {
     }
   }
 
-  async fetchWikipediaGeo(lat, lng, radius, limit) {
-    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${lat}%7C${lng}&gsradius=${radius}&gslimit=${limit}&format=json&origin=*`;
+  /**
+   * Single-roundtrip batch geosearch with extracts, descriptions & thumbnails in 1 request
+   */
+  async fetchWikipediaGeo(lat, lng, radius, limit, filterNarrated = false) {
+    const url = `https://${this.lang}.wikipedia.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exchars=300&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     try {
-      const res = await fetch(url, {
-        headers: { 'Api-User-Agent': 'Wanderlust/2.0 (Road Trip Audio Companion)' }
-      });
+      const res = await fetch(url, { headers: this.getHeaders() });
       if (!res.ok) throw new Error(`Wiki API returned ${res.status}`);
       const data = await res.json();
+      const pages = data?.query?.pages;
+      if (!pages) return [];
 
-      if (!data?.query?.geosearch) return [];
-
-      const candidateItems = data.query.geosearch.filter(item => !this.isNarrated(item.pageid) && !this.isNarrated(`wiki-${item.pageid}`)).slice(0, limit || 3);
-      
-      const summaryPromises = candidateItems.map(async (item) => {
-        try {
-          const summary = await this.getPageSummary(item.title);
-          return {
-            id: `wiki-${item.pageid}`,
-            source: 'wikipedia',
-            title: item.title,
-            lat: item.lat,
-            lng: item.lon,
-            dist: item.dist,
-            extract: summary?.extract || 'A notable roadside discovery.',
-            shortDescription: summary?.description || 'Historic or cultural landmark',
-            thumbnail: summary?.thumbnail?.source || null,
-            pageUrl: `https://${this.lang}.wikipedia.org/?curid=${item.pageid}`
-          };
-        } catch (e) {
-          return null;
+      const results = [];
+      for (const page of Object.values(pages)) {
+        if (!page || !page.pageid || !page.title) continue;
+        if (filterNarrated && (this.isNarrated(page.pageid) || this.isNarrated(`wiki-${page.pageid}`))) {
+          continue;
         }
-      });
 
-      const results = await Promise.all(summaryPromises);
-      return results.filter(Boolean);
+        const coords = page.coordinates && page.coordinates[0] ? page.coordinates[0] : null;
+        const pageLat = coords ? coords.lat : lat;
+        const pageLng = coords ? coords.lon : lng;
+        const dist = this.calculateDistance(lat, lng, pageLat, pageLng);
+
+        results.push({
+          id: `wiki-${page.pageid}`,
+          source: 'wikipedia',
+          title: page.title,
+          lat: pageLat,
+          lng: pageLng,
+          dist: Math.round(dist),
+          extract: page.extract || page.description || 'A notable roadside discovery.',
+          shortDescription: page.description || 'Historic or cultural landmark',
+          thumbnail: page.thumbnail?.source || null,
+          pageUrl: `https://${this.lang}.wikipedia.org/?curid=${page.pageid}`
+        });
+      }
+
+      return results;
     } catch (err) {
-      console.warn('Wikipedia fetch error:', err);
+      console.warn('Wikipedia batch fetch notice:', err.message);
       return [];
     }
   }
 
-  async fetchWikivoyageGeo(lat, lng, radius, limit) {
-    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&list=geosearch&gscoord=${lat}%7C${lng}&gsradius=${radius}&gslimit=${limit}&format=json&origin=*`;
+  async fetchWikivoyageGeo(lat, lng, radius, limit, filterNarrated = false) {
+    const url = `https://${this.lang}.wikivoyage.org/w/api.php?action=query&generator=geosearch&ggscoord=${lat}%7C${lng}&ggsradius=${radius}&ggslimit=${limit}&prop=coordinates|pageimages|extracts|description&exintro=1&explaintext=1&exchars=300&piprop=thumbnail&pithumbsize=300&format=json&origin=*`;
 
     try {
-      const res = await fetch(url, {
-        headers: { 'Api-User-Agent': 'Wanderlust/2.0 (Road Trip Audio Companion)' }
-      });
+      const res = await fetch(url, { headers: this.getHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
-      if (!data?.query?.geosearch) return [];
+      const pages = data?.query?.pages;
+      if (!pages) return [];
 
-      const candidateItems = data.query.geosearch.filter(item => !this.isNarrated(item.pageid) && !this.isNarrated(`voyage-${item.pageid}`));
-
-      const summaryPromises = candidateItems.map(async (item) => {
-        try {
-          const summary = await this.getWikivoyageSummary(item.title);
-          return {
-            id: `voyage-${item.pageid}`,
-            source: 'wikivoyage',
-            title: item.title,
-            lat: item.lat,
-            lng: item.lon,
-            dist: item.dist,
-            extract: summary?.extract || 'Travel guide spotlight.',
-            shortDescription: summary?.description || 'Travel guide recommendation',
-            thumbnail: summary?.thumbnail?.source || null,
-            pageUrl: `https://${this.lang}.wikivoyage.org/?curid=${item.pageid}`
-          };
-        } catch (e) {
-          return null;
+      const results = [];
+      for (const page of Object.values(pages)) {
+        if (!page || !page.pageid || !page.title) continue;
+        if (filterNarrated && (this.isNarrated(page.pageid) || this.isNarrated(`voyage-${page.pageid}`))) {
+          continue;
         }
-      });
 
-      const results = await Promise.all(summaryPromises);
-      return results.filter(Boolean);
+        const coords = page.coordinates && page.coordinates[0] ? page.coordinates[0] : null;
+        const pageLat = coords ? coords.lat : lat;
+        const pageLng = coords ? coords.lon : lng;
+        const dist = this.calculateDistance(lat, lng, pageLat, pageLng);
+
+        results.push({
+          id: `voyage-${page.pageid}`,
+          source: 'wikivoyage',
+          title: page.title,
+          lat: pageLat,
+          lng: pageLng,
+          dist: Math.round(dist),
+          extract: page.extract || page.description || 'Travel guide spotlight.',
+          shortDescription: page.description || 'Travel guide recommendation',
+          thumbnail: page.thumbnail?.source || null,
+          pageUrl: `https://${this.lang}.wikivoyage.org/?curid=${page.pageid}`
+        });
+      }
+
+      return results;
     } catch (err) {
-      console.warn('Wikivoyage fetch error:', err);
+      console.warn('Wikivoyage batch fetch notice:', err.message);
       return [];
     }
   }
 
+  /**
+   * Fetch page summary via MediaWiki REST API (with local memory cache)
+   */
   async getPageSummary(title) {
-    if (this.cache.has(`${this.lang}_${title}`)) {
-      return this.cache.get(`${this.lang}_${title}`);
+    if (!title) return null;
+    if (this.cache.has(title)) {
+      return this.cache.get(title);
     }
 
     try {
-      const encodedTitle = encodeURIComponent(title.replace(/ /g, '_'));
-      const url = `https://${this.lang}.wikipedia.org/api/rest_v1/page/summary/${encodedTitle}`;
-      const res = await fetch(url, { headers: { 'Api-User-Agent': 'TheWanderingLayer/1.0 (Road Trip Audio Companion)' } });
+      const url = `https://${this.lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+      const res = await fetch(url, { headers: this.getHeaders() });
       if (!res.ok) return null;
       const data = await res.json();
-      this.cache.set(`${this.lang}_${title}`, data);
-      return data;
+      const summary = {
+        extract: data.extract,
+        description: data.description,
+        thumbnail: data.thumbnail
+      };
+      this.cache.set(title, summary);
+      return summary;
     } catch (e) {
-      console.warn(`Could not get summary for ${title}:`, e);
       return null;
     }
   }
 
   async getWikivoyageSummary(title) {
-    const key = `voyage_${this.lang}_${title}`;
-    if (this.cache.has(key)) {
-      return this.cache.get(key);
+    if (!title) return null;
+    const cacheKey = `voyage_${title}`;
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey);
     }
 
     try {
-      const encodedTitle = encodeURIComponent(title.replace(/ /g, '_'));
-      const url = `https://${this.lang}.wikivoyage.org/api/rest_v1/page/summary/${encodedTitle}`;
-      const res = await fetch(url, { headers: { 'Api-User-Agent': 'TheWanderingLayer/1.0 (Road Trip Audio Companion)' } });
+      const url = `https://${this.lang}.wikivoyage.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+      const res = await fetch(url, { headers: this.getHeaders() });
       if (!res.ok) return null;
       const data = await res.json();
-      this.cache.set(key, data);
-      return data;
+      const summary = {
+        extract: data.extract,
+        description: data.description,
+        thumbnail: data.thumbnail
+      };
+      this.cache.set(cacheKey, summary);
+      return summary;
     } catch (e) {
       return null;
     }
