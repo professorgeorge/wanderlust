@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wandering-layer-v39';
+const CACHE_NAME = 'wandering-layer-v40';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -27,6 +27,12 @@ const ASSETS_TO_CACHE = [
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 ];
+
+self.addEventListener('message', (event) => {
+  if (event.data && (event.data.type === 'SKIP_WAITING' || event.data === 'SKIP_WAITING')) {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

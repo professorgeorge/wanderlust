@@ -4248,10 +4248,29 @@ class WanderingLayerApp {
 
   initServiceWorker() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').then((reg) => {
+      navigator.serviceWorker.register('./sw.js?v=40', { updateViaCache: 'none' }).then((reg) => {
         reg.update();
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+                window.location.reload();
+              }
+            });
+          }
+        });
       }).catch(err => {
         console.warn('Service worker registration non-fatal notice:', err);
+      });
+
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
       });
     }
   }
@@ -5355,6 +5374,31 @@ class WanderingLayerApp {
       };
       reader.readAsText(file);
     });
+
+    // Force Live App Update & Clear Cache
+    const forceUpdateBtn = document.getElementById('btn-force-update');
+    if (forceUpdateBtn) {
+      forceUpdateBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        forceUpdateBtn.disabled = true;
+        forceUpdateBtn.textContent = '⏳ Clearing caches & syncing latest code...';
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            for (const registration of registrations) {
+              await registration.unregister();
+            }
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            for (const key of keys) {
+              await caches.delete(key);
+            }
+          }
+        } catch (err) {}
+        window.location.reload(true);
+      });
+    }
   }
 
 
